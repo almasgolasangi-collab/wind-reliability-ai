@@ -1,117 +1,112 @@
+import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
-# --- 1. IEC 61400-1 DATA ENGINE ---
-def generate_iec_wind(intensity="medium"):
-    """Generates wind based on IEC 61400-1 Normal Turbulence Model (NTM)"""
+# --- PAGE SETUP ---
+st.set_page_config(page_title="Wind AI Reliability", layout="wide")
+
+# --- 1. LOGO & SIDEBAR ---
+# This looks for 'logo.png' in your GitHub repo
+try:
+    st.sidebar.image("logo.png", use_container_width=True)
+except:
+    st.sidebar.title("⚡ Wind AI Systems")
+    st.sidebar.write("*(Upload logo.png to GitHub to see logo)*")
+
+st.sidebar.markdown("---")
+st.sidebar.header("Data Input Control")
+
+# Choose between Demo mode or Manual Input
+input_choice = st.sidebar.radio("Input Method:", ["Slider (Fast Demo)", "Type List of Numbers (Custom Data)"])
+
+if input_choice == "Type List of Numbers (Custom Data)":
+    data_in = st.sidebar.text_input("Enter Wind Speeds (comma separated):", "14, 16, 15, 19, 17")
+    try:
+        # Converting the typed string into a list of numbers
+        data = [float(x.strip()) for x in data_in.split(",")]
+    except:
+        st.sidebar.error("Invalid format! Use numbers like: 10, 12, 15")
+        data = [14.8, 15.2, 14.5]
+else:
+    # Generative Mode (Based on IEC 61400-1 Logic)
+    intensity = st.sidebar.select_slider("Environment Intensity:", options=["low", "medium", "high"], value="medium")
     if intensity == "high": 
-        v_hub = 22.5; i_ref = 0.16 # IEC Class A
+        v_hub, i_ref = 22.5, 0.16
     elif intensity == "low": 
-        v_hub = 8.0; i_ref = 0.12  # IEC Class B
+        v_hub, i_ref = 8.0, 0.12
     else: 
-        v_hub = 14.8; i_ref = 0.14 # Standard
+        v_hub, i_ref = 14.8, 0.14
     
     sigma = i_ref * (0.75 * v_hub + 5.6)
-    # Ensure we don't get negative wind speeds
     data = np.random.normal(v_hub, sigma, 10)
-    return np.clip(data, 0.1, 40)
 
-# --- 2. MULTI-METHOD CALCULATION ENGINE ---
-def calculate_metrics(avg_v, std_v):
-    ti = std_v / avg_v 
-    
-    # Stress Index based on physical pressure
-    stress_idx = np.clip(((avg_v**2)/(25**2)) + (ti * 1.5), 0, 1)
-    stress_lbl = "CRITICAL" if stress_idx > 0.75 else "MODERATE" if stress_idx > 0.4 else "LOW"
+# --- 2. CALCULATION ENGINE ---
+avg_v = np.mean(data)
+std_v = np.std(data, ddof=1) if len(data) > 1 else 0.1
+ti = std_v / avg_v if avg_v > 0 else 0
 
-    # AI PARAMETERS (Vague Logic)
-    mid = stress_idx 
-    pi = np.clip(ti * 2.2, 0.1, 0.45) # Hesitation degree
-    L, U = np.clip(mid - 0.12, 0, 1), np.clip(mid + 0.12, 0, 1)
-    
-    # Vague Truth (t) and Falsehood (f)
-    t = mid * (1 - pi)
-    f = (1 - mid) * (1 - pi)
-    
-    # Fault Tree (Hard Limit at 20m/s)
-    ft_risk = 1.0 if avg_v >= 20.0 else 0.0
-    
-    # Markov Chain
-    markov_risk = np.clip(avg_v / 26.0, 0, 1)
+# Stress Index (The physical risk)
+stress_idx = np.clip(((avg_v**2)/(25**2)) + (ti * 1.5), 0, 1)
+stress_lbl = "CRITICAL" if stress_idx > 0.75 else "MODERATE" if stress_idx > 0.4 else "LOW"
 
-    return (ti, stress_idx, stress_lbl, L, mid, U, t, f, pi), ft_risk, markov_risk
+# Vague Set AI Parameters (t, f, pi)
+pi = np.clip(ti * 2.2, 0.1, 0.45) # Hesitation/Uncertainty
+t = stress_idx * (1 - pi)        # Truth membership
+f = (1 - stress_idx) * (1 - pi)  # Falsehood membership
 
-# --- 3. THE 3-BRAIN AUTONOMOUS DECISION LAYER ---
-def get_autonomous_decisions(r_ft, r_mar, r_mc, stress_lbl):
-    d_ft = ("SAFE (Normal)", "green") if r_ft > 0.5 else ("HALT (Over-limit)", "red")
-    d_mar = ("OPTIMAL", "green") if r_mar > 0.75 else ("CAUTION", "orange") if r_mar > 0.4 else ("SHUTDOWN", "red")
-    
-    if r_mc > 0.82: d_mc = (f"SAFE: {stress_lbl}", "green")
-    elif r_mc > 0.50: d_mc = (f"WARNING: {stress_lbl}", "orange")
-    else: d_mc = (f"EMERGENCY: {stress_lbl}", "red")
-        
-    return d_ft, d_mar, d_mc
+# Comparison reliability scores
+rel_ft = 1.0 if avg_v < 20.0 else 0.0
+rel_mar = 1.0 - np.clip(avg_v / 26.0, 0, 1)
+rel_mc = 1.0 - stress_idx
 
-def main():
-    print("\n" + "="*60 + "\n GEN-AI WIND RELIABILITY: MULTI-METHOD DASHBOARD \n" + "="*60)
-    
-    try:
-        mode = input("Select Mode ('real' or 'gen'): ").lower()
-        if mode == 'gen':
-            intensity = input("Intensity (low, med, high): ").lower()
-            data = generate_iec_wind(intensity)
-        else:
-            raw_input = input("Wind Speeds (comma separated): ")
-            data = [float(x) for x in raw_input.split(",")]
-        
-        avg_v, std_v = np.mean(data), np.std(data, ddof=1)
-        metrics, ft_r, mar_r = calculate_metrics(avg_v, std_v)
-        (ti, stress_idx, stress_lbl, L, M, U, t, f, pi) = metrics
-        
-        rel_ft, rel_mar, rel_mc = 1 - ft_r, 1 - mar_r, 1 - M
-        dec_ft, dec_mar, dec_mc = get_autonomous_decisions(rel_ft, rel_mar, rel_mc, stress_lbl)
+# --- 3. DASHBOARD METRICS ---
+st.title("⚡ IEC 61400-1: Multi-Method Reliability Dashboard")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Avg Wind Speed", f"{avg_v:.2f} m/s")
+c2.metric("Turbulence (TI)", f"{ti:.2f}")
+c3.metric("Stress Index", f"{stress_idx*100:.1f}%")
+c4.metric("Vague Uncertainty (π)", f"{pi:.2f}")
 
-        # --- PLOTTING ---
-        fig = plt.figure(figsize=(15, 9), facecolor='#f0f2f5')
-        gs = gridspec.GridSpec(2, 2, height_ratios=[2.5, 1])
-        ax1, ax2, ax3 = fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[0, 1]), fig.add_subplot(gs[1, :])
+# --- 4. THE GRAPHING (PROFESSIONAL GRIDSPEC) ---
+fig = plt.figure(figsize=(15, 9), facecolor='#f0f2f5')
+gs = gridspec.GridSpec(2, 2, height_ratios=[2.5, 1])
+ax1 = fig.add_subplot(gs[0, 0])
+ax2 = fig.add_subplot(gs[0, 1])
+ax3 = fig.add_subplot(gs[1, :])
 
-        # PANEL 1: FUSION MAP
-        alphas = np.linspace(0, 1, 20)
-        # Vague Area
-        ax1.fill_betweenx(alphas, t*alphas, (1-f)+(f*(1-alphas)), color='gold', alpha=0.2, label='Vague Uncertainty')
-        # Monte Carlo Area
-        ax1.fill_betweenx(alphas, L+alphas*(M-L), U-alphas*(U-M), color='blue', alpha=0.15, label='MC Fuzzy Zone')
-        
-        ax1.axvline(ft_r, color='black', ls='--', lw=2, label='Fault Tree Risk')
-        ax1.axvline(mar_r, color='darkorange', ls=':', lw=2, label='Markov Risk')
-        ax1.axvline(M, color='blue', ls='-', lw=2, label='AI Risk Index')
-        
-        ax1.set_title(f"INTELLIGENCE FUSION MAP\nTurbulence (TI): {ti:.2f} | Stress: {stress_idx*100:.1f}%", fontweight='bold')
-        ax1.set_xlim(-0.05, 1.05); ax1.legend(loc='upper right', fontsize='small')
+# PANEL 1: FUSION MAP (Visualizing Uncertainty)
+alphas = np.linspace(0, 1, 20)
+ax1.fill_betweenx(alphas, t*alphas, (1-f)+(f*(1-alphas)), color='gold', alpha=0.3, label='Vague Uncertainty (π)')
+ax1.axvline(1-rel_ft, color='black', ls='--', label='Fault Tree Risk')
+ax1.axvline(1-rel_mar, color='darkorange', ls=':', label='Markov Risk')
+ax1.axvline(stress_idx, color='blue', label='AI Risk Index', lw=3)
+ax1.set_title("INTELLIGENCE FUSION MAP", fontweight='bold')
+ax1.set_xlabel("Risk Probability (0 to 1)")
+ax1.set_xlim(-0.05, 1.05)
+ax1.legend()
 
-        # PANEL 2: COMPARISON
-        bars = ax2.bar(['Fault Tree', 'Markov Chain', 'Monte Carlo AI'], [rel_ft, rel_mar, rel_mc], 
-                        color=['#34495e', '#e67e22', '#2ecc71'], edgecolor='black')
-        ax2.set_title(f"RELIABILITY COMPARISON\nDetected: {stress_lbl} STRESS", fontweight='bold')
-        ax2.set_ylim(0, 1.2)
-        for b in bars:
-            ax2.text(b.get_x()+b.get_width()/2, b.get_height()+0.02, f"{b.get_height():.2f}", ha='center', fontweight='bold')
+# PANEL 2: RELIABILITY COMPARISON (Bar Chart)
+bars = ax2.bar(['Fault Tree', 'Markov Chain', 'Monte Carlo AI'], [rel_ft, rel_mar, rel_mc], 
+                color=['#34495e', '#e67e22', '#2ecc71'], edgecolor='black')
+ax2.set_title("RELIABILITY COMPARISON", fontweight='bold')
+ax2.set_ylabel("Reliability Score")
+ax2.set_ylim(0, 1.2)
+for b in bars:
+    ax2.text(b.get_x()+b.get_width()/2, b.get_height()+0.02, f"{b.get_height():.2f}", ha='center', fontweight='bold')
 
-        # PANEL 3: DECISION LAYER
-        ax3.set_axis_off()
-        box = dict(boxstyle='round,pad=1', facecolor='white', edgecolor='#bdc3c7', linewidth=1)
-        ax3.text(0.15, 0.4, f"FAULT TREE\n(BINARY):\n\n{dec_ft[0]}", color=dec_ft[1], fontsize=10, fontweight='bold', ha='center', bbox=box)
-        ax3.text(0.50, 0.4, f"MARKOV CHAIN\n(PROBABILISTIC):\n\n{dec_mar[0]}", color=dec_mar[1], fontsize=10, fontweight='bold', ha='center', bbox=box)
-        ax3.text(0.85, 0.4, f"MONTE CARLO AI\n(GENERATIVE):\n\n{dec_mc[0]}", color=dec_mc[1], fontsize=10, fontweight='bold', ha='center', 
-                 bbox=dict(box, edgecolor=dec_mc[1], linewidth=3))
+# PANEL 3: AUTONOMOUS DECISION LAYER
+ax3.set_axis_off()
+box = dict(boxstyle='round,pad=1', facecolor='white', edgecolor='#bdc3c7')
 
-        plt.tight_layout()
-        plt.show()
+# Decision Logic
+d_ft = ("SAFE", "green") if rel_ft > 0.5 else ("HALT", "red")
+d_mar = ("OPTIMAL", "green") if rel_mar > 0.6 else ("CAUTION", "orange")
+d_mc = (f"AI: {stress_lbl}", "green" if rel_mc > 0.6 else "red")
 
-    except Exception as e:
-        print(f"Error occurred: {e}. Please ensure inputs are correct.")
+ax3.text(0.15, 0.4, f"FAULT TREE:\n{d_ft[0]}", color=d_ft[1], fontsize=12, fontweight='bold', ha='center', bbox=box)
+ax3.text(0.50, 0.4, f"MARKOV CHAIN:\n{d_mar[0]}", color=d_mar[1], fontsize=12, fontweight='bold', ha='center', bbox=box)
+ax3.text(0.85, 0.4, f"VAGUE AI ENGINE:\n{d_mc[0]}", color=d_mc[1], fontsize=12, fontweight='bold', ha='center', 
+         bbox=dict(box, edgecolor=d_mc[1], linewidth=3))
 
-if __name__ == "__main__":
-    main()
+st.pyplot(fig)
