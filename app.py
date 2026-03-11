@@ -5,64 +5,79 @@ import matplotlib.pyplot as plt
 # --- PAGE SETUP ---
 st.set_page_config(page_title="Hybrid Wind AI", layout="wide")
 st.title("⚡ IEC 61400-1: 4-Layer Reliability Engine")
-st.write("Comparing **Fault Tree**, **Markov**, **Monte Carlo**, and **Vague Set AI**.")
 
 # --- SIDEBAR ---
 st.sidebar.header("Data Input")
-input_choice = st.sidebar.radio("Input Method:", ["Slider", "Data Stream (List)"])
+mean_v = st.sidebar.slider("Mean Wind Speed (m/s)", 0.0, 40.0, 15.0)
+std_v = st.sidebar.slider("Turbulence (Std Dev)", 0.1, 5.0, 2.0)
 
-if input_choice == "Data Stream (List)":
-    data_in = st.sidebar.text_input("Enter Speeds (e.g. 12, 15, 14, 18):", "14, 16, 15, 19, 17")
-    try:
-        vals = [float(x.strip()) for x in data_in.split(",")]
-        mean_v, std_v = np.mean(vals), np.std(vals)
-    except:
-        mean_v, std_v = 15.0, 2.0
-else:
-    mean_v = st.sidebar.slider("Mean Wind Speed (m/s)", 0.0, 35.0, 15.0)
-    std_v = st.sidebar.slider("Turbulence (Std Dev)", 0.1, 5.0, 1.8)
+# --- MATH CALCULATIONS ---
+x = np.linspace(0, 45, 500)
 
-# --- 4-LAYER CALCULATIONS ---
-ti = std_v / mean_v if mean_v > 0 else 0
+# 1. Fault Tree (Binary)
+y_ft = np.where(x < 25, 1.0, 0.0)
+curr_ft = 1.0 if mean_v < 25 else 0.0
 
-# 1. Fault Tree (Binary Cliff at 25m/s)
-ft_rel = 1.0 if mean_v < 25 else 0.0
+# 2. Markov Chain (Stochastic Decay)
+y_markov = np.exp(-0.03 * x)
+curr_markov = np.exp(-0.03 * mean_v)
 
-# 2. Markov (State Transition - Simplified)
-markov_rel = np.exp(-0.02 * mean_v) 
+# 3. Monte Carlo (Probabilistic Distribution)
+y_mc = (1/(std_v * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x - mean_v)/std_v)**2)
+mc_samples = np.random.normal(mean_v, std_v, 1000)
+curr_mc = np.sum(mc_samples < 25) / 1000
 
-# 3. Monte Carlo (1000 Simulations)
-mc_sims = np.random.normal(mean_v, std_v, 1000)
-mc_rel = np.sum(mc_sims < 25) / 1000
-
-# 4. Vague Set (The AI Layer)
-# Membership (Safe) and Non-Membership (Risk)
-mu = np.exp(-max(0, mean_v - 10)**2 / 150)
-nu = 1 - np.exp(-max(0, mean_v - 28)**2 / 40)
-pi_vague = 1 - mu - nu  # The "Vague" Uncertainty
+# 4. Vague Set (AI Uncertainty Layer)
+# Membership mu and Non-membership nu
+mu = np.exp(-max(0, x - 15)**2 / 100)
+nu = 1 - np.exp(-max(0, x - 30)**2 / 50)
+pi_vague_zone = 1 - mu - nu
+curr_pi = 1 - (np.exp(-max(0, mean_v - 15)**2 / 100)) - (1 - np.exp(-max(0, mean_v - 30)**2 / 50))
 
 # --- DASHBOARD METRICS ---
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Fault Tree", "SAFE" if ft_rel > 0 else "FAIL")
-c2.metric("Markov Reliability", f"{markov_rel*100:.1f}%")
-c3.metric("Monte Carlo Prob", f"{mc_rel*100:.1f}%")
-c4.metric("Vague Uncertainty (π)", f"{max(0, pi_vague):.2f}")
+c1.metric("Fault Tree", "SAFE" if curr_ft > 0 else "CRITICAL")
+c2.metric("Markov Reliability", f"{curr_markov*100:.1f}%")
+c3.metric("MC Success Rate", f"{curr_mc*100:.1f}%")
+c4.metric("Vague Uncertainty (π)", f"{max(0, curr_pi):.2f}")
 
-# --- THE COMPARISON GRAPH ---
-fig, ax = plt.subplots(1, 1, figsize=(12, 5))
-x = np.linspace(0, 40, 300)
+# --- THE 4-PANEL GRAPH ---
+fig, ax = plt.subplots(2, 2, figsize=(15, 8))
+plt.subplots_adjust(hspace=0.4)
 
-# Plotting the Logic Layers
-ax.plot(x, np.where(x < 25, 1.0, 0.0), color='black', label="Fault Tree (Rigid)", linestyle='--')
-ax.plot(x, np.exp(-0.02 * x), color='orange', label="Markov (Stochastic Decay)")
-ax.fill_between(x, 0, np.exp(-((x - mean_v)**2)/(2*std_v**2)), color='blue', alpha=0.1, label="Monte Carlo (Samples)")
-ax.fill_between(x, 0.4, 0.6, where=(x > 18) & (x < 32), color='gold', alpha=0.3, label="Vague Set (AI Uncertainty Zone)")
+# Plot 1: Fault Tree
+ax[0,0].plot(x, y_ft, color='black', label="Binary Logic")
+ax[0,0].axvline(mean_v, color='red', linestyle='--')
+ax[0,0].set_title("1. Fault Tree (Deterministic)")
+ax[0,0].set_ylim(-0.1, 1.1)
 
-ax.axvline(mean_v, color='red', label="CURRENT SENSOR", linewidth=3)
-ax.set_title("Evolution of Reliability Logic", fontsize=14)
-ax.legend(loc='upper right', fontsize='small')
-ax.set_xlabel("Wind Speed (m/s)")
-ax.set_ylabel("Confidence / Reliability")
+# Plot 2: Markov
+ax[0,1].plot(x, y_markov, color='orange', label="Stochastic")
+ax[0,1].axvline(mean_v, color='red', linestyle='--')
+ax[0,1].set_title("2. Markov Chain (Stochastic)")
+
+# Plot 3: Monte Carlo
+ax[1,0].fill_between(x, 0, y_mc, color='blue', alpha=0.3)
+ax[1,0].axvline(mean_v, color='red', linestyle='--')
+ax[1,0].set_title("3. Monte Carlo (Probabilistic)")
+
+# Plot 4: Vague Set
+ax[1,1].fill_between(x, 0, pi_vague_zone, color='gold', alpha=0.5)
+ax[1,1].axvline(mean_v, color='red', linestyle='--')
+ax[1,1].set_title("4. Vague Set AI (Uncertainty Layer)")
+
+for a in ax.flat:
+    a.set_xlabel("Wind Speed (m/s)")
+    a.grid(True, alpha=0.2)
+
 st.pyplot(fig)
 
-st.success(f"**Final Verdict:** Our Vague AI detects **{max(0, pi_vague):.2f} uncertainty** which the Fault Tree ignores.")
+# --- COMPARISON SUMMARY ---
+st.subheader("Method Comparison")
+methods = ['Fault Tree', 'Markov', 'Monte Carlo', 'Vague AI']
+reliability = [curr_ft, curr_markov, curr_mc, 1.0 - max(0, curr_pi)]
+fig2, ax2 = plt.subplots(figsize=(10, 3))
+ax2.barh(methods, reliability, color=['#2c3e50', '#e67e22', '#3498db', '#f1c40f'])
+ax2.set_xlim(0, 1.1)
+ax2.set_title("Real-Time Reliability Score Comparison")
+st.pyplot(fig2)
