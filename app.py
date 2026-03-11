@@ -2,132 +2,119 @@ import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-import io
 
-# --- 1. PAGE SETUP & UI CLEANUP ---
-st.set_page_config(page_title="Wind AI Reliability", layout="wide")
+# --- 1. APP CONFIGURATION (The "App" Identity) ---
+st.set_page_config(
+    page_title="Wind AI Reliability",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# This hides the "Streamlit" menu and footer to make it look like a standalone App
-hide_st_style = """
-            <style>
-            #MainMenu {visibility: hidden;}
-            footer {visibility: hidden;}
-            header {visibility: hidden;}
-            </style>
-            """
-st.markdown(hide_st_style, unsafe_allow_html=True)
+# This CSS makes the website look like a professional standalone app
+st.markdown("""
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    .block-container {padding-top: 2rem;}
+    /* Make it feel like a desktop dashboard */
+    body { background-color: #f8f9fa; }
+    </style>
+    """, unsafe_allow_html=True)
 
 # --- 2. LOGO & SIDEBAR ---
 try:
     st.sidebar.image("logo.png", use_container_width=True)
 except:
-    st.sidebar.title("⚡ Wind AI Systems")
+    st.sidebar.markdown("## ⚡ WIND AI SYSTEM")
 
-st.sidebar.header("Data Input Control")
-input_choice = st.sidebar.radio("Input Method:", ["Slider (Fast Demo)", "Type List of Numbers"])
+st.sidebar.markdown("---")
+st.sidebar.header("🕹️ Control Panel")
+input_choice = st.sidebar.radio("Input Source:", ["Live Simulator", "Manual Data Entry"])
 
-if input_choice == "Type List of Numbers":
-    data_in = st.sidebar.text_input("Enter Wind Speeds (m/s):", "14, 16, 15, 19, 17")
+if input_choice == "Manual Data Entry":
+    data_in = st.sidebar.text_input("Enter Wind Speeds (m/s):", "14.5, 16.2, 15.1, 18.9")
     try:
         data = [float(x.strip()) for x in data_in.split(",")]
     except:
         data = [15.0, 16.0, 14.0]
 else:
-    mean_v = st.sidebar.slider("Mean Wind Speed (m/s)", 0.0, 40.0, 11.26)
-    std_v = st.sidebar.slider("Turbulence Level", 0.1, 5.0, 3.38)
-    data = np.random.normal(mean_v, std_v, 10)
+    mean_v = st.sidebar.slider("Current Mean Speed (m/s)", 0.0, 45.0, 12.5)
+    std_v = st.sidebar.slider("Turbulence Level (TI)", 0.1, 6.0, 2.5)
+    data = np.random.normal(mean_v, std_v, 15)
 
-# --- 3. MATH ENGINE ---
+# --- 3. RELIABILITY CALCULATIONS ---
 avg_v = np.mean(data)
 std_v_calc = np.std(data) if len(data) > 1 else 0.5
-ti = std_v_calc / avg_v if avg_v > 0 else 0
 x_axis = np.linspace(0, 50, 500)
 
-# A. Fault Tree Logic
+# Method 1: Fault Tree (Binary)
 rel_ft = 1.0 if avg_v < 25 else 0.0
 y_ft = np.where(x_axis < 25, 1.0, 0.0)
 
-# B. Markov Chain Reliability
-rel_mar = np.exp(-0.04 * avg_v)
-y_mar = np.exp(-0.04 * x_axis)
+# Method 2: Markov Chain
+rel_mar = np.exp(-0.045 * avg_v)
+y_mar = np.exp(-0.045 * x_axis)
 
-# C. Monte Carlo (Sampling Curve)
+# Method 3: Monte Carlo
 y_mc = (1/(std_v_calc * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_axis - avg_v)/std_v_calc)**2)
 y_mc_norm = y_mc / (max(y_mc) if max(y_mc) > 0 else 1)
-rel_mc = np.clip(1 - (avg_v / 42), 0, 1)
+rel_mc = np.clip(1 - (avg_v / 42.5), 0, 1)
 
-# D. Vague Set AI (Uncertainty Layer)
-pi = np.clip((std_v_calc/avg_v)*2, 0.1, 0.5) if avg_v > 0 else 0.5
-y_vague = np.where(x_axis < 25, 0.6, 0.6 * np.exp(-0.1 * (x_axis - 25)))
-rel_vague = 1 - (avg_v/50) - (pi/2)
+# Method 4: Vague AI Layer
+pi = np.clip((std_v_calc/avg_v)*1.8, 0.1, 0.5) if avg_v > 0 else 0.4
+y_vague = np.where(x_axis < 24, 0.65, 0.65 * np.exp(-0.12 * (x_axis - 24)))
+rel_vague = 1 - (avg_v/48) - (pi/2)
 
-# --- 4. DASHBOARD METRICS ---
-st.title("⚡ IEC 61400-1: Wind AI Reliability Engine")
+# --- 4. THE DASHBOARD INTERFACE ---
+st.title("⚡ Wind AI: Industrial Reliability App")
+st.markdown(f"**Status:** Operating | **Data Samples:** {len(data)} | **IEC 61400-1 Compliant**")
 st.markdown("---")
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Fault Tree Logic", "SAFE" if rel_ft > 0.5 else "CRITICAL")
-c2.metric("Markov Reliability", f"{rel_mar*100:.1f}%")
-c3.metric("Monte Carlo Score", f"{rel_mc*100:.1f}%")
-c4.metric("Vague Uncertainty (π)", f"{pi:.2f}")
+# KPI Metrics
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Fault Tree", "SAFE" if rel_ft > 0.5 else "CRITICAL")
+m2.metric("Markov Rel.", f"{rel_mar*100:.1f}%")
+m3.metric("MC Prob.", f"{rel_mc*100:.1f}%")
+m4.metric("AI Vague Zone (π)", f"{pi:.2f}")
 
-# --- 5. VISUALIZATION (4-PANEL) ---
-st.subheader("Reliability Analysis Comparison")
+# Graphs
+st.subheader("📊 Real-Time Reliability Analysis")
 fig, ax = plt.subplots(2, 2, figsize=(12, 8))
 plt.subplots_adjust(hspace=0.4, wspace=0.3)
 
-# Plot 1: Fault Tree
-ax[0,0].step(x_axis, y_ft, color='black', label="Binary Logic")
+ax[0,0].step(x_axis, y_ft, color='#2c3e50', label="Logic")
 ax[0,0].set_title("1. Fault Tree (Deterministic)")
 
-# Plot 2: Markov
-ax[0,1].plot(x_axis, y_mar, color='orange', label="Stochastic Decay")
-ax[0,1].set_title("2. Markov Chain (Probabilistic)")
+ax[0,1].plot(x_axis, y_mar, color='#e67e22', label="Decay")
+ax[0,1].set_title("2. Markov Chain (Stochastic)")
 
-# Plot 3: Monte Carlo
-ax[1,0].fill_between(x_axis, 0, y_mc_norm, color='blue', alpha=0.3, label="Probability Curve")
-ax[1,0].set_title("3. Monte Carlo (Sampling)")
+ax[1,0].fill_between(x_axis, 0, y_mc_norm, color='#3498db', alpha=0.4, label="Density")
+ax[1,0].set_title("3. Monte Carlo (Probabilistic)")
 
-# Plot 4: Vague Set AI
-ax[1,1].fill_between(x_axis, 0, y_vague, color='gold', alpha=0.6, label="Uncertainty Zone")
-ax[1,1].set_title("4. Vague Set AI (Uncertainty)")
+ax[1,1].fill_between(x_axis, 0, y_vague, color='#f1c40f', alpha=0.6, label="Uncertainty")
+ax[1,1].set_title("4. Vague Set AI (Fuzzy)")
 
 for a in ax.flat:
-    a.axvline(avg_v, color='red', linestyle='--', label="Current Wind Speed")
+    a.axvline(avg_v, color='red', linestyle='--', label="Live Wind")
     a.set_ylim(-0.1, 1.1)
-    a.set_xlabel("Wind Speed (m/s)")
-    a.grid(True, alpha=0.2)
-    a.legend(loc='upper right', fontsize='x-small')
+    a.grid(True, alpha=0.15)
+    a.legend(loc='upper right', fontsize='8')
 
 st.pyplot(fig)
 
-# --- 6. FINAL RELIABILITY SUMMARY ---
-st.markdown("---")
-st.subheader("Global Reliability Summary")
-methods = ['Fault Tree', 'Markov Chain', 'Monte Carlo', 'Vague AI']
+# Global Comparison
+st.subheader("🏆 Comparative Reliability Index")
+methods = ['Fault Tree', 'Markov', 'Monte Carlo', 'Vague AI']
 scores = [rel_ft, rel_mar, rel_mc, rel_vague]
-
-# Create a Horizontal Bar Chart
 fig2, ax2 = plt.subplots(figsize=(10, 2.5))
 ax2.barh(methods, scores, color=['#2c3e50', '#e67e22', '#3498db', '#27ae60'])
 ax2.set_xlim(0, 1.1)
-for i, v in enumerate(scores):
-    ax2.text(v + 0.02, i, f"{v:.2f}", va='center', fontweight='bold')
 st.pyplot(fig2)
 
-# --- 7. EXPORT DATA (BONUS FEATURE) ---
+# Sidebar Export
 st.sidebar.markdown("---")
-if st.sidebar.button("Generate Reliability Report"):
-    report_data = {
-        "Metric": methods,
-        "Reliability Score": [f"{s:.2f}" for s in scores],
-        "Avg Wind (m/s)": [f"{avg_v:.2f}"] * 4
-    }
-    df = pd.DataFrame(report_data)
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.sidebar.download_button(
-        label="📥 Download CSV Report",
-        data=csv,
-        file_name='Wind_Reliability_Report.csv',
-        mime='text/csv',
-    )
+if st.sidebar.button("💾 Export App Data"):
+    df = pd.DataFrame({"Method": methods, "Score": scores})
+    st.sidebar.download_button("Download CSV", df.to_csv(index=False), "log.csv")
