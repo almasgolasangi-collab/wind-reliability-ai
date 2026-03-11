@@ -3,74 +3,66 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Wind AI Reliability", layout="wide")
+st.set_page_config(page_title="Hybrid Wind AI", layout="wide")
+st.title("⚡ IEC 61400-1: 4-Layer Reliability Engine")
+st.write("Comparing **Fault Tree**, **Markov**, **Monte Carlo**, and **Vague Set AI**.")
 
-st.title("⚡ IEC 61400-1 Wind Reliability Dashboard")
-st.write("This dashboard compares **Traditional Fault Trees**, **Markov Chains**, and **Generative AI (Vague Monte Carlo)**.")
+# --- SIDEBAR ---
+st.sidebar.header("Data Input")
+input_choice = st.sidebar.radio("Input Method:", ["Slider", "Data Stream (List)"])
 
-# --- SIDEBAR INPUTS ---
-st.sidebar.header("Control Parameters")
-input_method = st.sidebar.radio("Input Method:", ["Slider (Fast Demo)", "Type List of Numbers"])
-
-if input_method == "Type List of Numbers":
-    data_string = st.sidebar.text_input("Enter Wind Speeds (comma separated):", "10, 12, 11, 14, 13, 15")
+if input_choice == "Data Stream (List)":
+    data_in = st.sidebar.text_input("Enter Speeds (e.g. 12, 15, 14, 18):", "14, 16, 15, 19, 17")
     try:
-        custom_data = [float(x.strip()) for x in data_string.split(",")]
-        mean_speed = np.mean(custom_data)
-        std_dev = np.std(custom_data)
+        vals = [float(x.strip()) for x in data_in.split(",")]
+        mean_v, std_v = np.mean(vals), np.std(vals)
     except:
-        st.sidebar.error("Use numbers separated by commas!")
-        mean_speed, std_dev = 10.0, 1.5
+        mean_v, std_v = 15.0, 2.0
 else:
-    mean_speed = st.sidebar.slider("Mean Wind Speed (m/s)", 0.0, 30.0, 10.0)
-    std_dev = st.sidebar.slider("Turbulence (Std Dev)", 0.1, 5.0, 1.5)
+    mean_v = st.sidebar.slider("Mean Wind Speed (m/s)", 0.0, 35.0, 15.0)
+    std_v = st.sidebar.slider("Turbulence (Std Dev)", 0.1, 5.0, 1.8)
 
-# --- CALCULATIONS ---
-ti = std_dev / mean_speed if mean_speed > 0 else 0
-stress_index = (mean_speed * 3.5) + (ti * 40)
-vague_pi = min(1.0, (ti * 1.5) + (mean_speed / 40))
+# --- 4-LAYER CALCULATIONS ---
+ti = std_v / mean_v if mean_v > 0 else 0
 
-# --- UI LAYOUT ---
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Avg Wind Speed", f"{mean_speed:.2f} m/s")
-col2.metric("Turbulence (TI)", f"{ti:.2f}")
-col3.metric("Stress Index", f"{min(100.0, stress_index):.1f}%")
-col4.metric("Vague Uncertainty (π)", f"{vague_pi:.2f}")
+# 1. Fault Tree (Binary Cliff at 25m/s)
+ft_rel = 1.0 if mean_v < 25 else 0.0
 
-# --- NEW 3-METHOD FUSION GRAPH ---
-fig, ax = plt.subplots(1, 2, figsize=(14, 5))
+# 2. Markov (State Transition - Simplified)
+markov_rel = np.exp(-0.02 * mean_v) 
 
-x = np.linspace(0, 35, 200)
+# 3. Monte Carlo (1000 Simulations)
+mc_sims = np.random.normal(mean_v, std_v, 1000)
+mc_rel = np.sum(mc_sims < 25) / 1000
 
-# 1. Fault Tree (Step Function: 1 until 20m/s, then 0)
-y_fault = np.where(x < 20, 1.0, 0.0)
+# 4. Vague Set (The AI Layer)
+# Membership (Safe) and Non-Membership (Risk)
+mu = np.exp(-max(0, mean_v - 10)**2 / 150)
+nu = 1 - np.exp(-max(0, mean_v - 28)**2 / 40)
+pi_vague = 1 - mu - nu  # The "Vague" Uncertainty
 
-# 2. Markov Chain (Probabilistic Decay based on Intensity)
-y_markov = np.exp(-x / (25 / (ti + 0.1)))
+# --- DASHBOARD METRICS ---
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Fault Tree", "SAFE" if ft_rel > 0 else "FAIL")
+c2.metric("Markov Reliability", f"{markov_rel*100:.1f}%")
+c3.metric("Monte Carlo Prob", f"{mc_rel*100:.1f}%")
+c4.metric("Vague Uncertainty (π)", f"{max(0, pi_vague):.2f}")
 
-# 3. AI Vague Set (The Generative Zone)
-y_vague = np.exp(-((x - mean_speed)**2) / (2 * (std_dev**2 + 0.5)))
+# --- THE COMPARISON GRAPH ---
+fig, ax = plt.subplots(1, 1, figsize=(12, 5))
+x = np.linspace(0, 40, 300)
 
-# Plotting on Graph 0
-ax[0].plot(x, y_fault, color='black', linestyle='--', label="Fault Tree (Binary)", linewidth=2)
-ax[0].plot(x, y_markov, color='orange', label="Markov Chain (Probabilistic)", alpha=0.7)
-ax[0].fill_between(x, 0, y_vague, color='gold', alpha=0.4, label="AI Vague Monte Carlo Zone")
-ax[0].axvline(mean_speed, color='blue', label="Current Sensor Reading", linewidth=2)
+# Plotting the Logic Layers
+ax.plot(x, np.where(x < 25, 1.0, 0.0), color='black', label="Fault Tree (Rigid)", linestyle='--')
+ax.plot(x, np.exp(-0.02 * x), color='orange', label="Markov (Stochastic Decay)")
+ax.fill_between(x, 0, np.exp(-((x - mean_v)**2)/(2*std_v**2)), color='blue', alpha=0.1, label="Monte Carlo (Samples)")
+ax.fill_between(x, 0.4, 0.6, where=(x > 18) & (x < 32), color='gold', alpha=0.3, label="Vague Set (AI Uncertainty Zone)")
 
-ax[0].set_title("Intelligence Fusion: 3-Method Comparison", fontsize=12)
-ax[0].set_xlabel("Wind Speed (m/s)")
-ax[0].set_ylabel("Reliability Factor")
-ax[0].legend(loc='upper right', fontsize='small')
-ax[0].grid(True, alpha=0.2)
-
-# Graph 1: Reliability Bar Chart
-methods = ['Fault Tree', 'Markov', 'AI (Our)']
-scores = [1.0 if mean_speed < 20 else 0.0, np.exp(-mean_speed/20), 1.0 - (stress_index/100)]
-ax[1].bar(methods, scores, color=['#2c3e50', '#d35400', '#27ae60'])
-ax[1].set_title("Real-Time Reliability Score", fontsize=12)
-ax[1].set_ylim(0, 1.1)
-
+ax.axvline(mean_v, color='red', label="CURRENT SENSOR", linewidth=3)
+ax.set_title("Evolution of Reliability Logic", fontsize=14)
+ax.legend(loc='upper right', fontsize='small')
+ax.set_xlabel("Wind Speed (m/s)")
+ax.set_ylabel("Confidence / Reliability")
 st.pyplot(fig)
 
-# --- JUDGE'S INSIGHT ---
-st.info(f"**Insight:** The Blue Line shows the current sensor reading. While the **Fault Tree** stays at 1.0 until it hits the 20m/s cliff, the **AI Vague Zone** (Gold) accounts for the **{ti:.2f} turbulence**, showing a hidden risk even at lower speeds.")
+st.success(f"**Final Verdict:** Our Vague AI detects **{max(0, pi_vague):.2f} uncertainty** which the Fault Tree ignores.")
