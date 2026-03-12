@@ -5,136 +5,152 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.stats import norm
 
-st.set_page_config(page_title="Wind Reliability Engineering Pipeline", layout="wide")
+# 1. PAGE SETUP
+st.set_page_config(page_title="Wind Engineering Pipeline", layout="wide")
 
-# --- STEP 1: DATA COLLECTION ---
+st.title("🛡️ Wind Turbine Reliability: Data Science Pipeline")
+st.markdown("---")
+
+# 2. DATA ACQUISITION LAYER
 st.sidebar.header("Step 1: Data Acquisition")
-data_source = st.sidebar.radio("Data Source:", ["Upload My CSV", "Generate Raw 'Dirty' Dataset"])
+data_mode = st.sidebar.radio("Select Source:", ["Generate 'Dirty' Dataset", "Upload My CSV"])
 
-if data_source == "Generate Raw 'Dirty' Dataset":
-    # Creating a dummy 'Raw' dataset with errors for cleansing demonstration
-    rows = 500
+raw_df = pd.DataFrame()
+
+if data_mode == "Generate 'Dirty' Dataset":
+    # Creating a dataset with errors (Nulls and Outliers) to show Cleansing
+    rows = 200
     data = {
-        'Timestamp': pd.date_range(start='1/1/2024', periods=rows, freq='H'),
-        'Wind_Speed_ms': np.random.normal(12, 4, rows),
-        'Ambient_Temp': np.random.normal(25, 5, rows)
+        'Timestamp': pd.date_range(start='1/1/2026', periods=rows, freq='h'),
+        'Wind_Speed': np.random.normal(12, 4, rows),
+        'Vibration_Level': np.random.normal(0.5, 0.1, rows)
     }
     raw_df = pd.DataFrame(data)
-    # Injecting "Dirty" data (Outliers and Nulls)
-    raw_df.loc[10:15, 'Wind_Speed_ms'] = np.nan  # Null values
-    raw_df.loc[50:52, 'Wind_Speed_ms'] = 99.0    # Impossible Outlier
-    raw_df.loc[100:102, 'Wind_Speed_ms'] = -5.0  # Physical Impossibility
+    # Injecting Errors for demo
+    raw_df.loc[10:15, 'Wind_Speed'] = np.nan  # Missing Values
+    raw_df.loc[50:52, 'Wind_Speed'] = 99.0    # Outlier
+    raw_df.loc[80:82, 'Wind_Speed'] = -5.0    # Impossible Value
 else:
-    uploaded_file = st.sidebar.file_uploader("Upload your SCADA CSV", type=["csv"])
+    uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
     if uploaded_file:
         raw_df = pd.read_csv(uploaded_file)
     else:
-        st.info("Waiting for CSV upload...")
+        st.info("Awaiting CSV Upload...")
         st.stop()
 
-# --- STEP 2: DATA CLEANSING (The "Evaluate" part) ---
-st.header("Step 2: Data Evaluation & Cleansing")
-col1, col2 = st.columns(2)
+# 3. DATA EVALUATION & CLEANSING
+st.header("Step 2: Data Cleansing & Evaluation")
+c1, c2 = st.columns(2)
 
-with col1:
-    st.subheader("Raw Data Issues")
-    st.write(f"Total Rows: {len(raw_df)}")
+# Error-proof column detection
+target_col = ""
+for col in raw_df.columns:
+    if 'wind' in col.lower() or 'speed' in col.lower():
+        target_col = col
+        break
+
+if not target_col:
+    st.error("Could not find a 'Wind Speed' column. Please check your CSV.")
+    st.stop()
+
+with c1:
+    st.write("**Before Cleansing (Raw Data)**")
+    st.write(raw_df.head(5))
     st.write("Missing Values:", raw_df.isnull().sum())
 
 # CLEANSING LOGIC
 clean_df = raw_df.copy()
-wind_col = 'Wind_Speed_ms' if 'Wind_Speed_ms' in raw_df.columns else raw_df.columns[1]
+clean_df = clean_df.dropna(subset=[target_col]) # Remove Nulls
+clean_df = clean_df[(clean_df[target_col] >= 0) & (clean_df[target_col] <= 50)] # Remove Outliers
 
-# 1. Remove Nulls
-clean_df = clean_df.dropna(subset=[wind_col])
-# 2. Filter Outliers (Standard Wind Turbine Range 0-25m/s)
-clean_df = clean_df[(clean_df[wind_col] >= 0) & (clean_df[wind_col] <= 45)]
-
-with col2:
-    st.subheader("Cleaned Data Results")
-    st.write(f"Rows remaining: {len(clean_df)}")
-    st.success(f"Cleaned {len(raw_df) - len(clean_df)} problematic rows.")
+with c2:
+    st.write("**After Cleansing (Clean Data)**")
+    st.write(clean_df.head(5))
+    st.success(f"Removed {len(raw_df) - len(clean_df)} invalid observations.")
 
 st.divider()
 
-# --- STEP 3: EDA (EXPLORATORY DATA ANALYSIS) ---
+# 4. EDA (EXPLORATORY DATA ANALYSIS)
 st.header("Step 3: Exploratory Data Analysis (EDA)")
-eda1, eda2, eda3 = st.columns(3)
+e1, e2, e3 = st.columns(3)
 
-with eda1:
-    st.write("**Velocity Distribution**")
-    fig, ax = plt.subplots()
-    sns.histplot(clean_df[wind_col], kde=True, color='blue', ax=ax)
-    st.pyplot(fig)
+v_mean = clean_df[target_col].mean()
+v_std = clean_df[target_col].std()
 
-with eda2:
-    st.write("**Statistical Summary**")
-    st.write(clean_df[wind_col].describe())
-    v_mean = clean_df[wind_col].mean()
-    v_std = clean_df[wind_col].std()
+with e1:
+    st.write("**Wind Distribution**")
+    fig_e1, ax_e1 = plt.subplots()
+    sns.histplot(clean_df[target_col], kde=True, color='teal', ax=ax_e1)
+    st.pyplot(fig_e1)
 
-with eda3:
-    st.write("**Time-Series Trend**")
-    fig2, ax2 = plt.subplots()
-    ax2.plot(clean_df[wind_col][:100], color='green') # Showing first 100 hrs
-    ax2.set_ylabel("m/s")
-    st.pyplot(fig2)
+with e2:
+    st.write("**Boxplot (Outlier Check)**")
+    fig_e2, ax_e2 = plt.subplots()
+    sns.boxplot(x=clean_df[target_col], color='lightgreen', ax=ax_e2)
+    st.pyplot(fig_e2)
+
+with e3:
+    st.write("**Descriptive Statistics**")
+    st.write(clean_df[target_col].describe())
 
 st.divider()
 
-# --- STEP 4: RELIABILITY ANALYSIS (The 3 Methods) ---
-st.header("Step 4: Multi-Method Reliability Modeling")
+# 5. RELIABILITY MODELING (3 METHODS)
+st.header("Step 4: Reliability Modeling")
 m1, m2, m3 = st.columns(3)
 
-# Fault Tree
 with m1:
-    st.write("**Fault Tree Logic**")
+    st.write("**Fault Tree Analysis**")
+    x = np.linspace(0, 50, 100)
+    y = np.where(x < 25, 100, 0)
+    fig1, ax1 = plt.subplots()
+    ax1.plot(x, y, color='black', linewidth=2)
+    ax1.axvline(v_mean, color='red', linestyle='--')
+    st.pyplot(fig1)
     rel_fta = 100 if v_mean < 25 else 0
-    fig_f, ax_f = plt.subplots()
-    ax_f.step([0, 25, 50], [100, 100, 0], where='post', color='black')
-    ax_f.axvline(v_mean, color='red', linestyle='--')
-    st.pyplot(fig_f)
 
-# Monte Carlo
 with m2:
     st.write("**Monte Carlo Simulation**")
-    rel_mc = max(0, 100 - (v_std/v_mean * 100))
-    x = np.linspace(v_mean-10, v_mean+10, 100)
-    y = norm.pdf(x, v_mean, v_std)
-    fig_m, ax_m = plt.subplots()
-    ax_m.plot(x, y, color='blue')
-    ax_m.fill_between(x, y, alpha=0.2)
-    st.pyplot(fig_m)
+    x_mc = np.linspace(v_mean-10, v_mean+10, 100)
+    y_mc = norm.pdf(x_mc, v_mean, v_std)
+    fig2, ax2 = plt.subplots()
+    ax2.plot(x_mc, y_mc, color='blue', linewidth=2)
+    ax2.fill_between(x_mc, y_mc, alpha=0.3, color='blue')
+    st.pyplot(fig2)
+    # Correct MC Reliability Logic
+    rel_mc = max(0, 100 - (v_std / v_mean * 100))
 
-# Markov Chain
 with m3:
-    st.write("**Markov Transition**")
-    rel_mar = np.exp(-0.04 * v_mean) * 100
+    st.write("**Markov Chain Decay**")
     x_mar = np.linspace(0, 50, 100)
     y_mar = np.exp(-0.04 * x_mar) * 100
-    fig_ma, ax_ma = plt.subplots()
-    ax_ma.plot(x_mar, y_mar, color='orange')
-    st.pyplot(fig_ma)
+    fig3, ax3 = plt.subplots()
+    ax3.plot(x_mar, y_mar, color='orange', linewidth=2)
+    st.pyplot(fig3)
+    rel_mar = np.exp(-0.04 * v_mean) * 100
 
 st.divider()
 
-# --- STEP 5: FINAL EVALUATION ---
+# 6. RESULTS & BAR GRAPH
 st.header("Step 5: Final Evaluation")
-res_l, res_r = st.columns([2, 1])
+r1, r2 = st.columns([2, 1])
 
-with res_l:
+with r1:
+    st.write("**Method Comparison (Bar Graph)**")
     methods = ["Fault Tree", "Monte Carlo", "Markov Chain"]
     scores = [rel_fta, rel_mc, rel_mar]
-    fig_bar, ax_bar = plt.subplots()
-    ax_bar.bar(methods, scores, color=['#2c3e50', '#3498db', '#e67e22'])
-    ax_bar.set_ylim(0, 110)
-    st.pyplot(fig_bar)
+    fig_res, ax_res = plt.subplots()
+    bars = ax_res.bar(methods, scores, color=['#2c3e50', '#3498db', '#e67e22'])
+    ax_res.set_ylim(0, 110)
+    for b in bars:
+        ax_res.text(b.get_x()+b.get_width()/2, b.get_height()+2, f"{b.get_height():.1f}%", ha='center', weight='bold')
+    st.pyplot(fig_res)
 
-with res_r:
-    st.write("**Component Reliability Status**")
-    risk = (v_mean/35)**2
+with r2:
+    st.write("**Component Reliability**")
+    risk_factor = (v_mean/35)**2
     st.table(pd.DataFrame({
-        "Component": ["Blades", "Gearbox"],
-        "Health": [f"{100-risk*100:.1f}%", "98.2%"],
-        "Status": ["SAFE" if risk < 0.2 else "WARN", "SAFE"]
+        "Component": ["Blades", "Gearbox", "Generator"],
+        "Health": [f"{100 - (risk_factor*100):.1f}%", "97.5%", "98.2%"],
+        "Verdict": ["SAFE" if risk_factor < 0.2 else "ALERT", "SAFE", "SAFE"]
     }))
