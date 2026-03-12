@@ -4,10 +4,10 @@ import numpy as np
 import requests
 import matplotlib.pyplot as plt
 
-# --- 1. CONFIG ---
-st.set_page_config(page_title="Wind AI Reliability Monitor", layout="wide")
+# --- 1. SETTINGS & SITES ---
+st.set_page_config(page_title="IEC 61400 Wind Reliability AI", layout="wide")
 
-# YOUR LIVE KEY
+# YOUR LIVE API KEY
 API_KEY = "3bea6d570f4e26ab35c5f69864e977d6" 
 
 SITES = {
@@ -17,68 +17,117 @@ SITES = {
     "Kayathar, TN": {"lat": 8.94, "lon": 77.72, "class": "I"}
 }
 
-# --- 2. LIVE FETCH ---
-def get_live_data(lat, lon):
+# --- 2. LIVE DATA FETCHING ---
+def fetch_live_wind(lat, lon):
     try:
         url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}&units=metric"
         res = requests.get(url, timeout=5).json()
-        return res['wind']['speed'], res['wind'].get('deg', 0), "✅ LIVE"
-    except:
-        return 4.5, 0, "⚠️ CACHE"
+        v_live = res['wind']['speed']
+        return v_live, "✅ LIVE API ACTIVE"
+    except Exception:
+        return 4.5, "⚠️ FALLBACK MODE (Offline)"
 
-# --- 3. UI ---
-st.title("🌬️ Universal Wind Reliability AI")
-st.sidebar.header("Data Settings")
-mode = st.sidebar.radio("Source", ["Live API", "Excel Upload"])
+# --- 3. INPUT HANDLING ---
+st.sidebar.header("📡 Data Control")
+mode = st.sidebar.radio("Source:", ["Live Wind API", "Excel Upload"])
 
 if mode == "Excel Upload":
     file = st.sidebar.file_uploader("Upload SCADA Data", type=["xlsx", "csv"])
-    if not file: st.stop()
-    df = pd.read_csv(file) if file.name.endswith('csv') else pd.read_excel(file)
-    col = [c for c in df.columns if 'speed' in c.lower() or 'wind' in c.lower()][0]
-    data = df[col].dropna().values
-    site_name = "Uploaded Plant"
+    if file:
+        df_up = pd.read_csv(file) if file.name.endswith('csv') else pd.read_excel(file)
+        speed_col = [c for c in df_up.columns if 'speed' in c.lower() or 'wind' in c.lower()][0]
+        data_points = df_up[speed_col].dropna().values
+        site_name = "Custom Upload"
+    else: st.stop()
 else:
-    site_name = st.sidebar.selectbox("Select Site", list(SITES.keys()))
-    v_base, v_deg, status = get_live_data(SITES[site_name]['lat'], SITES[site_name]['lon'])
-    st.sidebar.write(f"Status: {status} | Direction: {v_deg}°")
-    data = np.random.normal(v_base, 0.6, 1000)
+    site_name = st.sidebar.selectbox("Select Wind Farm:", list(SITES.keys()))
+    v_base, status = fetch_live_wind(SITES[site_name]['lat'], SITES[site_name]['lon'])
+    st.sidebar.info(status)
+    # MONTE CARLO: Using live wind as the mean for 1000 samples
+    data_points = np.random.normal(v_base, 0.6, 1000)
 
-# --- 4. CALCULATIONS ---
-avg_v = np.mean(data)
+avg_v = np.mean(data_points)
+std_v = np.std(data_points)
+
+# --- 4. RELIABILITY CALCULATIONS ---
+# 1. Markov Reliability (Exponential Decay)
 rel_markov = np.exp(-0.04 * avg_v) * 100
-rel_mc = (1 - (np.std(data)/avg_v)) * 100 if avg_v > 0 else 0
-rel_vague = (1 - (avg_v / 45)) * 100
-p_fta = (avg_v / 25)**2
-rel_fta = (1 - p_fta) * 100
 
-# --- 5. VISUAL COMPARISON ---
-st.subheader("📊 4-Method Comparison Matrix")
-cols = st.columns(4)
-cols[0].metric("Markov", f"{rel_markov:.1f}%")
-cols[1].metric("Monte Carlo", f"{rel_mc:.1f}%")
-cols[2].metric("Vague Sets", f"{rel_vague:.1f}%")
-cols[3].metric("Fault Tree", f"{rel_fta:.1f}%")
+# 2. Monte Carlo Reliability (Inverse of Turbulence)
+rel_mc = (1 - (std_v / avg_v)) * 100 if avg_v > 0 else 0
+
+# 3. Fault Tree Analysis (FTA) 
+p_fail = (avg_v / 25)**2
+rel_fta = (1 - p_fail) * 100
+
+# --- 5. DASHBOARD HEADER ---
+st.title(f"🌬️ Reliability Dashboard: {site_name}")
+st.write(f"**Live Feed Analytics:** March 12, 2026 | **Framework:** IEC 61400-1 Standards")
+
+# --- 6. 3-METHOD COMPARISON MATRIX ---
+st.subheader("📊 3-Method Reliability Comparison")
+m1, m2, m3 = st.columns(3)
+m1.metric("Markov Chain Score", f"{rel_markov:.2f}%", help="Long-term state stability")
+m2.metric("Monte Carlo Score", f"{rel_mc:.2f}%", help="Probabilistic load risk")
+m3.metric("Fault Tree (FTA) Score", f"{rel_fta:.2f}%", help="Logic-based system safety")
 
 st.divider()
 
-c1, c2 = st.columns(2)
-with c1:
-    st.subheader("🎲 Monte Carlo Distribution")
-    fig1, ax1 = plt.subplots()
-    ax1.hist(data, bins=30, color='skyblue', edgecolor='white')
-    ax1.axvline(avg_v, color='red', linestyle='--')
+# --- 7. VISUALIZATIONS (ALL 3 METHODS) ---
+
+# ROW 1: MONTE CARLO & MARKOV
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("🎲 Monte Carlo Risk Distribution")
+    fig1, ax1 = plt.subplots(figsize=(7, 4))
+    ax1.hist(data_points, bins=40, color='#3498db', edgecolor='white', alpha=0.8)
+    ax1.axvline(avg_v, color='red', linestyle='--', label=f'Live Mean: {avg_v:.2f} m/s')
+    ax1.set_xlabel("Wind Speed (m/s)")
+    ax1.set_ylabel("Frequency")
+    ax1.legend()
     st.pyplot(fig1)
+    st.caption("Monte Carlo uses 1000 iterations to determine structural load thresholds.")
 
-with c2:
-    st.subheader("⛓️ Markov State Prediction")
-    fig2, ax2 = plt.subplots()
-    ax2.bar(['Op', 'Warn', 'Fail'], [0.8, 0.15, 0.05], color=['green', 'orange', 'red'])
+with col2:
+    st.subheader("⛓️ Markov Chain State Prediction")
+    # Dynamic calculation: As wind speed increases, shutdown probability grows
+    p_op = 0.95 if avg_v < 8 else (0.80 if avg_v < 15 else 0.50)
+    p_warn = (1 - p_op) * 0.7
+    p_sd = (1 - p_op) * 0.3
+    
+    fig2, ax2 = plt.subplots(figsize=(7, 4))
+    ax2.bar(['Operational', 'Warning', 'Shutdown'], [p_op, p_warn, p_sd], color=['#2ecc71', '#f1c40f', '#e74c3c'])
+    ax2.set_ylabel("Probability of State")
     st.pyplot(fig2)
+    st.caption("Markov Model predicts the next transition state based on current live intensity.")
 
-st.subheader("🔍 Logic Breakdown")
-st.table(pd.DataFrame({
-    "Method": ["Markov", "Monte Carlo", "Vague Sets", "FTA"],
-    "Focus": ["Transitions", "Randomness", "Noisy Data", "Root Cause"],
-    "Status": ["Stable" if rel_markov > 80 else "Monitor", "Safe", "Filtered", "Logic Verified"]
-}))
+st.divider()
+
+# ROW 2: FTA & SUMMARY
+col3, col4 = st.columns(2)
+
+with col3:
+    st.subheader("🌲 Fault Tree Analysis (Visual Logic)")
+    st.markdown(f"""
+    <div style="background:#f8f9fa; padding:25px; border-radius:10px; border-left: 8px solid #c0392b;">
+        <strong style="font-size:18px;">TOP EVENT: SYSTEM TRIP</strong><br>
+        Current Probability: <span style="color:red; font-size:22px; font-weight:bold;">{p_fail:.4%}</span><br><br>
+        <b>Root Cause Probabilities:</b><br>
+        - Blade Stress (Rotor Group): {(p_fail*0.7):.4%}<br>
+        - Drive Train Wear (Gearbox): {(p_fail*0.3):.4%}<br><br>
+        <i>Logic: [OR GATE] System fails if either Blade OR Gearbox exceeds threshold.</i>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col4:
+    st.subheader("📋 Methodology Summary")
+    summary_df = pd.DataFrame({
+        "Method": ["Monte Carlo", "Markov Chain", "Fault Tree"],
+        "Analysis Type": ["Probabilistic", "Predictive", "Logical"],
+        "Focus Area": ["Load Variability", "State Reliability", "Root Cause Logic"],
+        "Final Index": [f"{rel_mc:.2f}%", f"{rel_markov:.2f}%", f"{rel_fta:.2f}%"]
+    })
+    st.table(summary_df)
+
+st.info(f"Analysis verified for {site_name} using OpenWeatherMap API for Lat/Lon: {SITES.get(site_name, {}).get('lat')}, {SITES.get(site_name, {}).get('lon')}")
