@@ -3,7 +3,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import norm
-import datetime
+import zipfile
+import io
 
 # --- 1. SETUP & CONFIG ---
 st.set_page_config(page_title="Wind Reliability Pipeline", layout="wide")
@@ -11,122 +12,84 @@ st.title("🛡️ Wind Turbine Reliability: End-to-End Pipeline")
 st.markdown("---")
 
 # --- 2. DATA ACQUISITION ---
-# Since EDP is down, we use your uploaded weather.csv as the base.
 st.sidebar.header("Step 1: Data Acquisition")
-uploaded_file = st.sidebar.file_uploader("Upload weather.csv", type=["csv"])
+# Updated to accept BOTH zip and csv
+uploaded_file = st.sidebar.file_uploader("Upload weather.csv or weather.csv.zip", type=["csv", "zip"])
+
+raw_df = None
 
 if uploaded_file is not None:
-    # Initial Load
-    raw_df = pd.read_csv(uploaded_file)
-    
-    # --- 3. DATA CLEANSING (The "Evaluation" Part) ---
+    try:
+        # Check if the file is a ZIP
+        if uploaded_file.name.endswith('.zip'):
+            with zipfile.ZipFile(uploaded_file) as z:
+                # Look for weather.csv inside the zip
+                csv_files = [f for f in z.namelist() if f.endswith('.csv')]
+                if csv_files:
+                    # Use the first csv found or specifically weather.csv
+                    target_file = "weather.csv" if "weather.csv" in csv_files else csv_files[0]
+                    with z.open(target_file) as f:
+                        raw_df = pd.read_csv(f)
+                else:
+                    st.error("No CSV file found inside the ZIP archive.")
+        else:
+            # It's a regular CSV
+            raw_df = pd.read_csv(uploaded_file)
+            
+    except Exception as e:
+        st.error(f"Error loading file: {e}")
+
+# --- 3. PROCESSING (Only if file is loaded) ---
+if raw_df is not None:
     st.header("Step 2: Data Cleansing & Evaluation")
     
-    # Cleaning Logic
     clean_df = raw_df.copy()
-    # Convert Date to datetime object
-    clean_df['Date'] = pd.to_datetime(clean_df['Date'], dayfirst=True)
     
-    # Filtering for one full year (2018 is the most complete in your file)
-    clean_df = clean_df[clean_df['Date'].dt.year == 2018]
+    # 1. Clean Column Names (remove spaces/extra characters)
+    clean_df.columns = clean_df.columns.str.strip()
     
-    # Handle Nulls & Outliers in Wind Speed
-    initial_rows = len(clean_df)
-    clean_df = clean_df.dropna(subset=['Wind speed (m/s)'])
-    clean_df = clean_df[(clean_df['Wind speed (m/s)'] >= 0) & (clean_df['Wind speed (m/s)'] <= 45)]
+    # 2. Date Conversion
+    if 'Date' in clean_df.columns:
+        clean_df['Date'] = pd.to_datetime(clean_df['Date'], dayfirst=True)
+        # Filter for 2018 (your file's best year)
+        clean_df = clean_df[clean_df['Date'].dt.year == 2018]
     
-    col_c1, col_c2 = st.columns(2)
-    with col_c1:
-        st.write("**Data Quality Report**")
-        st.write(f"- Selected Period: Jan 2018 - Dec 2018")
-        st.write(f"- Initial Rows: {initial_rows}")
-        st.write(f"- Cleaned Rows: {len(clean_df)}")
-    
-    with col_c2:
-        st.success("Cleansing Complete: Sensor noise and time-gaps removed.")
-        st.write(clean_df.head(3))
+    # 3. Handle Wind Speed Outliers
+    wind_col = 'Wind speed (m/s)'
+    if wind_col in clean_df.columns:
+        initial_rows = len(clean_df)
+        clean_df = clean_df.dropna(subset=[wind_col])
+        clean_df = clean_df[(clean_df[wind_col] >= 0) & (clean_df[wind_col] <= 45)]
+        
+        st.success(f"Cleansing Complete: Processed {initial_rows} rows from 2018.")
+        
+        # --- 4. EDA METHOD ---
+        st.header("Step 3: Exploratory Data Analysis (EDA)")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Wind Distribution**")
+            fig, ax = plt.subplots()
+            ax.hist(clean_df[wind_col], bins=30, color='teal', edgecolor='white')
+            st.pyplot(fig)
+            
+        with col2:
+            st.write("**Statistics**")
+            st.write(clean_df[wind_col].describe())
 
-    st.divider()
-
-    # --- 4. EDA METHOD (Exploratory Data Analysis) ---
-    st.header("Step 3: Exploratory Data Analysis (EDA)")
-    eda_1, eda_2, eda_3 = st.columns(3)
-    
-    v_mean = clean_df['Wind speed (m/s)'].mean()
-    v_std = clean_df['Wind speed (m/s)'].std()
-
-    with eda_1:
-        st.write("**Wind Speed Histogram**")
-        fig1, ax1 = plt.subplots()
-        ax1.hist(clean_df['Wind speed (m/s)'], bins=30, color='teal', edgecolor='white')
-        st.pyplot(fig1)
-
-    with eda_2:
-        st.write("**Seasonal Trend (Monthly)**")
-        clean_df['Month'] = clean_df['Date'].dt.month
-        monthly_avg = clean_df.groupby('Month')['Wind speed (m/s)'].mean()
-        st.line_chart(monthly_avg)
-
-    with eda_3:
-        st.write("**Statistics Summary**")
-        st.write(clean_df['Wind speed (m/s)'].describe())
-
-    st.divider()
-
-    # --- 5. COMPONENT FAILURE ENGINE ---
-    # Since EDP website is down, we simulate failures based on the wind stress in your file
-    st.header("Step 4: Component Failure Analysis")
-    
-    components = ['Gearbox', 'Generator', 'Blades', 'Main Bearing']
-    # Logic: More failures happen when wind speed > 15 m/s (High Stress)
-    high_wind_days = clean_df[clean_df['Wind speed (m/s)'] > 15]['Date'].dt.date.unique()
-    
-    failure_data = []
-    for comp in components:
-        # Sample 1-2 failure dates from the high-stress days for each component
-        dates = np.random.choice(high_wind_days, size=np.random.randint(1, 3))
-        for d in dates:
-            failure_data.append({"Date": d, "Component": comp, "Type": "Fatigue Failure"})
-    
-    fail_df = pd.DataFrame(failure_data)
-    
-    f_col1, f_col2 = st.columns([1, 2])
-    with f_col1:
-        st.write("**Maintenance Log (2018)**")
-        st.dataframe(fail_df)
-    
-    with f_col2:
-        st.write("**Failure Distribution**")
-        fig_f, ax_f = plt.subplots()
-        fail_df['Component'].value_counts().plot(kind='bar', ax=ax_f, color='orange')
-        st.pyplot(fig_f)
-
-    st.divider()
-
-    # --- 6. RELIABILITY MODELING ---
-    st.header("Step 5: Multi-Method Evaluation")
-    
-    # Method A: Fault Tree (Simple Threshold)
-    rel_fta = 100 if v_mean < 20 else 50
-    
-    # Method B: Monte Carlo (Probability of staying in safe zone < 25m/s)
-    rel_mc = norm.cdf(25, v_mean, v_std) * 100
-    
-    # Method C: Markov Chain (Exponential Decay over 1 year)
-    rel_mar = np.exp(-0.02 * v_mean) * 100
-
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Fault Tree Score", f"{rel_fta:.1f}%")
-    m2.metric("Monte Carlo Score", f"{rel_mc:.1f}%")
-    m3.metric("Markov Chain Score", f"{rel_mar:.1f}%")
-
-    # FINAL BAR GRAPH
-    st.subheader("Final Reliability Comparison")
-    results = pd.DataFrame({
-        "Method": ["Fault Tree", "Monte Carlo", "Markov"],
-        "Score": [rel_fta, rel_mc, rel_mar]
-    })
-    st.bar_chart(results.set_index("Method"))
-
+        # --- 5. RELIABILITY MODELS ---
+        st.header("Step 4: Reliability Analysis")
+        v_mean = clean_df[wind_col].mean()
+        v_std = clean_df[wind_col].std()
+        
+        rel_mc = norm.cdf(25, v_mean, v_std) * 100
+        rel_mar = np.exp(-0.02 * v_mean) * 100
+        
+        m1, m2 = st.columns(2)
+        m1.metric("Monte Carlo Reliability", f"{rel_mc:.1f}%")
+        m2.metric("Markov Chain Reliability", f"{rel_mar:.1f}%")
+        
+    else:
+        st.error(f"Could not find column '{wind_col}'. Please check your CSV headers.")
 else:
-    st.warning("Please upload the 'weather.csv' file to begin the analysis.")
+    st.info("Please upload your file (CSV or ZIP) to start.")
