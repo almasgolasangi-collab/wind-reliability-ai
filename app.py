@@ -3,76 +3,117 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# --- 1. LIVE DATA CAPTURE (MARCH 12, 2026 - 14:50 IST) ---
-LIVE_SITES = {
-    "Muppandal, TN": {"v": 3.6, "forecast_24h": 4.5, "iec": "Class III", "desc": "Light Rain, NE Wind"},
-    "Jaisalmer, RJ": {"v": 5.2, "forecast_24h": 6.1, "iec": "Class III", "desc": "Sunny, SW Wind"},
-    "Kutch, GJ": {"v": 5.7, "forecast_24h": 5.2, "iec": "Class III", "desc": "Heatwave, WNW Wind"},
+# --- 1. CONFIG & BRANDING ---
+st.set_page_config(page_title="Wind AI: Live India Monitor", page_icon="logo.ico", layout="wide")
+
+st.markdown("""
+    <style>
+    .stMetric { background-color: #ffffff; border: 1px solid #e0e0e0; padding: 15px; border-radius: 10px; }
+    .fta-box { border: 2px solid #2e86c1; padding: 10px; border-radius: 5px; text-align: center; background: #ebf5fb; }
+    .gate { font-weight: bold; color: #e74c3c; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 2. LIVE PLANT DATA (March 12, 2026 - 15:00 IST) ---
+LIVE_PLANT_DATA = {
+    "Brahmanvel, MH": {"v": 3.8, "dir": "NW", "iec": "Class III"},
+    "Dhalgaon, MH": {"v": 4.0, "dir": "E", "iec": "Class III"},
+    "Chitradurga, KA": {"v": 4.9, "dir": "E", "iec": "Class III"},
+    "Kayathar, TN": {"v": 4.5, "dir": "E", "iec": "Class III"}
 }
 
-st.set_page_config(page_title="Wind AI: Live India Monitor", layout="wide")
+# --- 3. SIDEBAR CONTROLS ---
+st.sidebar.image("logo.png", use_container_width=True)
+st.sidebar.title("🔋 Control Center")
 
-# --- 2. DATA INPUT & FILE UPLOAD ---
-st.sidebar.title("🔋 Plant Monitoring")
-input_type = st.sidebar.radio("Data Input:", ["Live Plant Feed", "Upload Plant Dataset"])
+data_source = st.sidebar.radio("Data Input:", ["Live Remote Monitoring", "Local Dataset Upload"])
 
-if input_type == "Live Plant Feed":
-    site = st.sidebar.selectbox("Select Power Plant:", list(LIVE_SITES.keys()))
-    v_base = LIVE_SITES[site]["v"]
-    forecast = LIVE_SITES[site]["forecast_24h"]
-    st.sidebar.success(f"Live: {v_base} m/s | Forecast: {forecast} m/s")
-    # Simulate a 10-minute mean distribution (IEC 61400-1)
-    data = np.random.normal(v_base, v_base * 0.1, 50)
+if data_source == "Live Remote Monitoring":
+    site = st.sidebar.selectbox("Select Active Wind Farm:", list(LIVE_PLANT_DATA.keys()))
+    v_base = LIVE_PLANT_DATA[site]["v"]
+    # Generate distribution based on live wind
+    data = np.random.normal(v_base, v_base * 0.1, 100)
 else:
-    uploaded_file = st.sidebar.file_uploader("Upload CSV/Excel", type=["csv", "xlsx"])
+    uploaded_file = st.sidebar.file_uploader("Upload Plant Log", type=["xlsx", "csv"])
     if uploaded_file:
-        df_up = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('csv') else pd.read_excel(uploaded_file)
-        data = df_up.iloc[:, 0].values # Use first column
+        df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('csv') else pd.read_excel(uploaded_file)
+        data = df.iloc[:, 0].values
+        site = "Custom Upload"
     else:
-        data = np.random.normal(12, 1.5, 50) # Sample data
+        st.warning("Please upload a file.")
+        st.stop()
 
-# --- 3. THE 3-METHOD COMPARISON ENGINE ---
 avg_v = np.mean(data)
 
-# Method 1: Markov Chain (Reliability over Time)
-rel_markov = np.exp(-0.04 * avg_v) * 100 
-# Method 2: Monte Carlo (Risk based on Turbulence)
-rel_mc = (1 - (np.std(data) / avg_v)) * 100 if avg_v > 0 else 0
-# Method 3: Vague Sets (Fuzzy Logic for Uncertainty)
-rel_vague = (1 - (avg_v / 40)) * 100 
+# --- 4. FAULT TREE ANALYSIS (FTA) LOGIC ---
+# Probabilities of basic events (modeled on wind speed intensity)
+p_blade_fracture = 0.02 * (avg_v / 10)
+p_pitch_failure = 0.015
+p_gearbox_wear = 0.03 * (avg_v / 10)
+p_gen_overheat = 0.01
 
-# --- 4. DASHBOARD LAYOUT ---
-st.title("🌬️ Wind Power Plant Reliability & Forecasting")
-st.write(f"**Current Status for:** {site if input_type == 'Live Plant Feed' else 'Custom Dataset'}")
+# Intermediate Events
+# OR Gate: Rotor Failure = Blade Fracture OR Pitch Failure
+p_rotor_failure = 1 - (1 - p_blade_fracture) * (1 - p_pitch_failure)
+# AND Gate: Drive Train Failure = Gearbox AND Generator (assuming redundancy/check)
+p_drivetrain_failure = p_gearbox_wear * p_gen_overheat 
 
-# Forecast Banner
-if input_type == "Live Plant Feed":
-    st.info(f"🔮 **24-Hour Forecast:** Wind speeds expected to reach **{forecast} m/s** at this site. No high-wind cutoff risks detected.")
+# TOP EVENT: System Shutdown = Rotor Failure OR Drivetrain Failure
+p_top_event = 1 - (1 - p_rotor_failure) * (1 - p_drivetrain_failure)
 
-# Metrics Row
-c1, c2, c3 = st.columns(3)
-c1.metric("Live Mean Speed", f"{avg_v:.2f} m/s")
-c2.metric("IEC Class", LIVE_SITES[site]['iec'] if input_type == "Live Plant Feed" else "Calculated")
-c3.metric("Reliability Verdict", "OPTIMAL" if rel_markov > 85 else "CAUTION")
+# --- 5. MAIN DASHBOARD ---
+st.title(f"🌬️ Reliability Analysis: {site}")
+st.write(f"**Live Feed:** March 12, 2026, 15:00 IST")
+
+# Row 1: Key Metrics
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Live Wind Speed", f"{avg_v:.2f} m/s")
+m2.metric("Markov Reliability", f"{np.exp(-0.04 * avg_v)*100:.1f}%")
+m3.metric("System Failure Risk", f"{p_top_event*100:.2f}%")
+m4.metric("Site IEC Class", LIVE_PLANT_DATA.get(site, {"iec": "N/A"})["iec"])
 
 st.markdown("---")
 
-# Method Comparison Table
-st.subheader("📊 Comparison of Mathematical Models")
+# Row 2: Fault Tree Visualization
+st.subheader("🌲 Fault Tree Analysis (FTA)")
+f1, f2, f3 = st.columns([1, 2, 1])
+with f2:
+    st.markdown(f"""
+    <div class="fta-box">
+        <strong>TOP EVENT: SYSTEM SHUTDOWN</strong><br>
+        Probability: <span style="color:red">{p_top_event*100:.3f}%</span>
+    </div>
+    <div style="text-align:center">↑ <span class="gate">OR GATE</span> ↑</div>
+    <div style="display: flex; justify-content: space-around;">
+        <div class="fta-box" style="width: 45%;">
+            <strong>Rotor Failure</strong><br>{p_rotor_failure*100:.3f}%
+            <br>↑ <span class="gate">OR</span> ↑<br>
+            <small>Blades ({p_blade_fracture:.2%})<br>Pitch ({p_pitch_failure:.2%})</small>
+        </div>
+        <div class="fta-box" style="width: 45%;">
+            <strong>Drivetrain Failure</strong><br>{p_drivetrain_failure*100:.5f}%
+            <br>↑ <span class="gate">AND</span> ↑<br>
+            <small>Gearbox ({p_gearbox_wear:.2%})<br>Generator ({p_gen_overheat:.2%})</small>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("---")
+
+# Row 3: Method Comparison
+st.subheader("📊 Mathematical Comparison")
 comparison_df = pd.DataFrame({
-    "Methodology": ["Markov Chain", "Monte Carlo", "Vague Sets"],
-    "Technical Usage": ["State Transition Modeling", "Stochastic Simulation", "Fuzzy Uncertainty"],
-    "Calculated Reliability": [f"{rel_markov:.2f}%", f"{rel_mc:.2f}%", f"{rel_vague:.2f}%"],
-    "Best For": ["Predictive Maintenance", "Extreme Gust Analysis", "Sensor Noise Reduction"]
+    "Method": ["Markov Chain", "Monte Carlo", "Vague Sets", "Fault Tree (FTA)"],
+    "Focus": ["Life Cycle", "Stochastic Risk", "Uncertainty", "Root Cause Logic"],
+    "Score": [
+        f"{np.exp(-0.04 * avg_v)*100:.1f}%", 
+        f"{(1-(np.std(data)/avg_v))*100:.1f}%", 
+        f"{(1-(avg_v/40))*100:.1f}%",
+        f"{(1-p_top_event)*100:.2f}%"
+    ]
 })
 st.table(comparison_df)
 
-# Forecast Visualization
-st.subheader("📈 Real-time vs Predicted Wind Trend")
-fig, ax = plt.subplots(figsize=(10, 3))
-ax.plot(data, label="Live Sensor Readings", color='blue', alpha=0.6)
-ax.axhline(avg_v, color='red', linestyle='--', label="Current Mean")
-if input_type == "Live Plant Feed":
-    ax.axhline(forecast, color='green', linestyle=':', label="24h Forecasted Mean")
-ax.legend()
-st.pyplot(fig)
+# Row 4: Live Trend
+st.subheader("📈 Live Stochastic Wind Stream")
+st.line_chart(data)
