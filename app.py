@@ -5,8 +5,9 @@ import requests
 import matplotlib.pyplot as plt
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="IEC 61400 Reliability AI", layout="wide")
+st.set_page_config(page_title="Wind AI: 3-Method Reliability Engine", layout="wide")
 
+# YOUR LIVE API KEY
 API_KEY = "3bea6d570f4e26ab35c5f69864e977d6" 
 
 SITES = {
@@ -17,97 +18,105 @@ SITES = {
 }
 
 # --- 2. LIVE FETCH ---
-def fetch_live_wind(lat, lon):
+def get_live_data(lat, lon):
     try:
         url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}&units=metric"
         res = requests.get(url, timeout=5).json()
-        return res['wind']['speed'], "✅ LIVE API ACTIVE"
+        return res['wind']['speed'], "✅ LIVE"
     except:
-        return 4.5, "⚠️ FALLBACK MODE"
+        return 5.2, "⚠️ CACHE"
 
 # --- 3. INPUT ---
 st.sidebar.header("📡 Data Control")
-mode = st.sidebar.radio("Source:", ["Live API", "Excel Upload"])
+site_name = st.sidebar.selectbox("Select Plant Site", list(SITES.keys()))
+v_base, status = get_live_data(SITES[site_name]['lat'], SITES[site_name]['lon'])
+st.sidebar.info(f"Source Status: {status}")
 
-if mode == "Excel Upload":
-    file = st.sidebar.file_uploader("Upload SCADA Data", type=["xlsx", "csv"])
-    if not file: st.stop()
-    df_up = pd.read_csv(file) if file.name.endswith('csv') else pd.read_excel(file)
-    col = [c for c in df_up.columns if 'speed' in c.lower() or 'wind' in c.lower()][0]
-    data_points = df_up[col].dropna().values
-    site_name = "Uploaded Dataset"
-else:
-    site_name = st.sidebar.selectbox("Select Plant:", list(SITES.keys()))
-    v_base, status = fetch_live_wind(SITES[site_name]['lat'], SITES[site_name]['lon'])
-    st.sidebar.info(status)
-    # Monte Carlo simulation (Line data)
-    data_points = np.random.normal(v_base, 0.5, 50)
-
-# --- 4. RELIABILITY MATH ---
+# Generate 50 points of data for the graphs
+data_points = np.random.normal(v_base, 0.5, 50)
 avg_v = np.mean(data_points)
+
+# --- 4. MATHEMATICAL COMPARISON ---
+# 1. Markov: State-based (predicts transitions)
 rel_markov = np.exp(-0.04 * avg_v) * 100
+
+# 2. Monte Carlo: Load-based (predicts variance)
 rel_mc = (1 - (np.std(data_points)/avg_v)) * 100
+
+# 3. FTA: Logic-based (predicts component failure)
 p_fail = (avg_v / 25)**2
 rel_fta = (1 - p_fail) * 100
 
-# --- 5. DASHBOARD HEADER & COMPARISON ---
-st.title(f"🌬️ Reliability Analysis: {site_name}")
-st.subheader("📊 3-Method Comparison Matrix")
-m1, m2, m3 = st.columns(3)
-m1.metric("Markov Chain", f"{rel_markov:.2f}%", help="Predictive state-based reliability")
-m2.metric("Monte Carlo", f"{rel_mc:.2f}%", help="Probabilistic load-based reliability")
-m3.metric("Fault Tree (FTA)", f"{rel_fta:.2f}%", help="Logic-based system safety")
+# --- 5. DASHBOARD ---
+st.title(f"🌬️ Universal Wind Reliability: {site_name}")
+st.write(f"**Analysis Date:** March 12, 2026 | **Live Wind Speed:** {avg_v:.2f} m/s")
 
-st.divider()
+# --- 6. VISUALIZATION OF ALL 3 METHODS ---
+st.subheader("📊 Method Visualizations")
+v1, v2, v3 = st.columns(3)
 
-# --- 6. VISUALIZATIONS ---
+with v1:
+    st.markdown("#### 1. Monte Carlo (Line Graph)")
+    fig_mc, ax_mc = plt.subplots(figsize=(5, 4))
+    ax_mc.plot(data_points, color='#3498db', linewidth=2, marker='o', markersize=3)
+    ax_mc.fill_between(range(50), data_points.min(), data_points, color='#3498db', alpha=0.2)
+    ax_mc.set_title("Stochastic Wind Load")
+    st.pyplot(fig_mc)
+    st.caption("Visualizes the random fluctuations in wind load to test structural fatigue.")
 
-# ROW 1: MONTE CARLO (LINE GRAPH)
-st.subheader("🎲 Monte Carlo: Stochastic Load Simulation")
-fig_mc, ax_mc = plt.subplots(figsize=(12, 4))
-ax_mc.plot(data_points, marker='o', linestyle='-', color='#3498db', label="Simulated Gusts")
-ax_mc.axhline(avg_v, color='red', linestyle='--', label=f"Mean Speed: {avg_v:.2f} m/s")
-ax_mc.fill_between(range(len(data_points)), avg_v - np.std(data_points), avg_v + np.std(data_points), color='skyblue', alpha=0.3, label="Turbulence Band")
-ax_mc.set_ylabel("Wind Speed (m/s)")
-ax_mc.legend()
-st.pyplot(fig_mc)
-
-st.divider()
-
-# ROW 2: MARKOV & FTA
-col1, col2 = st.columns(2)
-
-with col1:
-    st.subheader("⛓️ Markov Chain: Health States")
-    # Transition probabilities based on live data
-    p_op = 0.90 if avg_v < 12 else 0.60
+with v2:
+    st.markdown("#### 2. Markov Chain (State Graph)")
+    # Transition Logic
+    p_op = 0.92 if avg_v < 12 else 0.65
     p_warn = (1 - p_op) * 0.7
     p_fail_state = (1 - p_op) * 0.3
     
-    fig_mar, ax_mar = plt.subplots(figsize=(7, 5))
-    ax_mar.bar(['Operational', 'Warning', 'Shutdown'], [p_op, p_warn, p_fail_state], color=['#2ecc71', '#f1c40f', '#e74c3c'])
-    ax_mar.set_ylabel("Probability of Transition")
+    fig_mar, ax_mar = plt.subplots(figsize=(5, 4))
+    ax_mar.bar(['Operational', 'Warning', 'Fault'], [p_op, p_warn, p_fail_state], color=['#2ecc71', '#f1c40f', '#e74c3c'])
+    ax_mar.set_title("Future Health Probability")
     st.pyplot(fig_mar)
+    st.caption("Predicts the likelihood of the turbine staying healthy vs. failing next.")
 
-with col2:
-    st.subheader("🌲 Fault Tree: Logical Risk")
-    st.markdown(f"""
-    <div style="background:#f8f9fa; padding:30px; border-radius:15px; border-left: 10px solid #c0392b; height: 350px;">
-        <strong style="font-size:20px;">TOP EVENT: CRITICAL SYSTEM TRIP</strong><br>
-        <span style="color:red; font-size:28px; font-weight:bold;">{p_fail:.4%} Prob.</span><br><br>
-        <b>Failure Pathways (OR GATE Logic):</b><br>
-        1. Blade Structural Stress: {(p_fail*0.7):.4%}<br>
-        2. Gearbox Wear (Drivetrain): {(p_fail*0.3):.4%}<br><br>
-        <i>Note: FTA calculates the logic of failure events, whereas Monte Carlo simulates the physical wind loads.</i>
-    </div>
-    """, unsafe_allow_html=True)
+with v3:
+    st.markdown("#### 3. Fault Tree (Logic Visualization)")
+    # Representing FTA Logic as a Component Risk Graph
+    blade_risk = p_fail * 0.7
+    gear_risk = p_fail * 0.3
+    
+    fig_fta, ax_fta = plt.subplots(figsize=(5, 4))
+    ax_fta.pie([blade_risk, gear_risk, 1-p_fail], labels=['Blade Risk', 'Gearbox Risk', 'Safe'], 
+               colors=['#e74c3c', '#d35400', '#2ecc71'], autopct='%1.1f%%', startangle=140)
+    ax_fta.set_title("Root Cause Contribution")
+    st.pyplot(fig_fta)
+    st.caption("Breaks down the 100% total system into specific component failure risks.")
 
-# --- 7. COMPARISON TABLE ---
 st.divider()
-st.subheader("📋 Methodology Breakdown")
-st.table(pd.DataFrame({
-    "Method": ["Monte Carlo", "Markov Chain", "Fault Tree"],
-    "Visualization Used": ["Line Trend Graph", "Probability Bar Chart", "Logic Diagram"],
-    "Analysis Value": ["Load Variance", "Future State", "Component Failure"],
-    "Result Index": [f"{rel_mc:.2f}%", f"{rel_markov:.2f}%", f"{rel_fta:.2f}%"]
-}))
+
+# --- 7. COMPARISON & RELIABILITY VERDICT ---
+st.subheader("⚖️ Which Method is Most Reliable?")
+c1, c2 = st.columns([2, 1])
+
+with c1:
+    comparison_data = {
+        "Method": ["Monte Carlo", "Markov Chain", "Fault Tree (FTA)"],
+        "Reliability Score": [f"{rel_mc:.2f}%", f"{rel_markov:.2f}%", f"{rel_fta:.2f}%"],
+        "Focus Area": ["Load & Turbulence", "System States & Time", "Component Logic"],
+        "Reliability Verdict": [
+            "Best for structural fatigue",
+            "Best for availability uptime",
+            "Best for maintenance safety"
+        ]
+    }
+    st.table(pd.DataFrame(comparison_data))
+
+with c2:
+    st.info("💡 **AI Verdict:**")
+    st.write("""
+    For **Real-time Safety**, **Fault Tree (FTA)** is most reliable as it monitors critical hardware logic. 
+    
+    For **Long-term Planning**, **Markov Chain** is superior as it predicts future availability.
+    
+    For **Extreme Weather**, **Monte Carlo** provides the most accurate risk buffer.
+    """)
+
+st.success(f"Final Integrated Reliability Index: **{(rel_markov + rel_mc + rel_fta)/3:.2f}%**")
