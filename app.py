@@ -5,146 +5,132 @@ import requests
 import matplotlib.pyplot as plt
 
 # --- 1. SETTINGS & LOGO ---
-st.set_page_config(page_title="Wind AI Reliability Analysis", layout="wide")
+st.set_page_config(page_title="Wind AI Reliability", layout="wide")
 
 # Sidebar Logo
 try:
     st.sidebar.image("logo.png", use_container_width=True)
 except:
-    st.sidebar.info("Upload 'logo.png' to see your brand.")
+    st.sidebar.info("Upload 'logo.png' to Sidebar")
 
 # --- 2. DATA INPUT CONTROL ---
-st.sidebar.title("Data Control Center")
-input_choice = st.sidebar.radio("Input Method:", ["Upload Data Set", "Live API Feed", "Manual Demo"])
+st.sidebar.title("Data Control")
+input_choice = st.sidebar.radio("Input Source:", ["Set of Data (Upload)", "Live API", "Manual Demo"])
 
 v_mean = 12.0
-v_std = 2.0
+v_std = 1.5
 wind_series = []
 
-if input_choice == "Upload Data Set":
+if input_choice == "Set of Data (Upload)":
     uploaded_file = st.sidebar.file_uploader("Upload CSV/Excel", type=["csv", "xlsx"])
     if uploaded_file:
         df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('csv') else pd.read_excel(uploaded_file)
-        # Auto-detect wind column
-        col = [c for c in df.columns if 'wind' in c.lower() or 'speed' in c.lower()][0]
+        col = [c for c in df.columns if 'speed' in c.lower() or 'wind' in c.lower()][0]
         wind_series = df[col].dropna().values
         v_mean = np.mean(wind_series)
         v_std = np.std(wind_series)
     else:
-        st.info("Awaiting file upload...")
         st.stop()
-elif input_choice == "Live API Feed":
-    # Brahmanvel MH coordinates for example
-    url = "https://api.openweathermap.org/data/2.5/weather?lat=21.03&lon=74.22&appid=3bea6d570f4e26ab35c5f69864e977d6&units=metric"
+elif input_choice == "Live API":
+    # Brahmanvel MH Example
     try:
+        url = "https://api.openweathermap.org/data/2.5/weather?lat=21.03&lon=74.22&appid=3bea6d570f4e26ab35c5f69864e977d6&units=metric"
         res = requests.get(url).json()
         v_mean = res['wind']['speed']
-        wind_series = np.random.normal(v_mean, 0.5, 100)
     except:
-        v_mean = 14.2
-        wind_series = np.random.normal(v_mean, 0.5, 100)
+        v_mean = 11.5
+    wind_series = np.random.normal(v_mean, 0.8, 100)
 else:
-    v_mean = st.sidebar.slider("Set Mean Wind Speed (m/s)", 0.0, 40.0, 15.0)
-    v_std = st.sidebar.slider("Set Turbulence (Std Dev)", 0.1, 5.0, 2.0)
+    v_mean = st.sidebar.slider("Wind Speed (m/s)", 0.0, 45.0, 15.0)
+    v_std = st.sidebar.slider("Turbulence", 0.1, 5.0, 1.2)
     wind_series = np.random.normal(v_mean, v_std, 100)
 
-# --- 3. TIER 1: ACTUAL WIND GRAPH ---
-st.header("1. Input Wind Data Profile")
-fig_wind, ax_wind = plt.subplots(figsize=(12, 3))
-ax_wind.plot(wind_series, color='#2c3e50', linewidth=1, label="Wind Velocity (m/s)")
-ax_wind.axhline(v_mean, color='red', linestyle='--', label=f"Mean: {v_mean:.2f} m/s")
-ax_wind.fill_between(range(len(wind_series)), wind_series, alpha=0.1, color='blue')
-ax_wind.set_ylabel("Velocity")
-ax_wind.legend()
-st.pyplot(fig_wind)
+# --- 3. THE WIND PROFILE GRAPH ---
+st.header("1. Wind Speed Profile")
+fig_w, ax_w = plt.subplots(figsize=(12, 3))
+ax_w.plot(wind_series, color='#2c3e50', linewidth=1.5, label="Raw Wind Speed")
+ax_w.fill_between(range(len(wind_series)), wind_series, color='#34495e', alpha=0.1)
+ax_w.axhline(v_mean, color='red', linestyle='--', label=f"Mean: {v_mean:.2f} m/s")
+ax_w.set_ylabel("m/s")
+ax_w.legend()
+st.pyplot(fig_w)
 
-st.markdown("---")
+st.divider()
 
-# --- 4. TIER 2: METHODOLOGY VISUALIZATIONS ---
-st.header("2. Scientific Methodology Visuals")
-col1, col2, col3 = st.columns(3)
+# --- 4. INDEPENDENT METHOD VISUALIZATIONS ---
+st.header("2. Methodology Analysis")
+c1, c2, c3 = st.columns(3)
 
-# METHOD A: Fault Tree Analysis (Logic Visualization)
-with col1:
-    st.subheader("Fault Tree (FTA)")
-    # Logic: Reliability is 100% until cut-off at 25m/s
-    x_fta = np.linspace(0, 40, 100)
-    y_fta = [100 if i < 25 else 0 for i in x_fta]
-    fig_fta, ax_fta = plt.subplots()
-    ax_fta.plot(x_fta, y_fta, color='black', linewidth=3)
-    ax_fta.fill_between(x_fta, y_fta, color='gray', alpha=0.2)
-    ax_fta.axvline(v_mean, color='red', linestyle='--', label="Current Wind")
-    ax_fta.set_title("Deterministic Binary Logic")
-    ax_fta.set_ylabel("System Reliability %")
-    st.pyplot(fig_fta)
+# A. Fault Tree (Binary Step Graph)
+with c1:
+    st.write("### Fault Tree (FTA)")
+    x_fta = np.linspace(0, 50, 100)
+    y_fta = np.where(x_fta < 25, 100, 0) # Logic: 100% until 25m/s
+    fig1, ax1 = plt.subplots()
+    ax1.plot(x_fta, y_fta, color='black', linewidth=2, label='System Limit')
+    ax1.axvline(v_mean, color='red', linestyle='--', label='Current Wind')
+    ax1.fill_between(x_fta, y_fta, alpha=0.1, color='gray')
+    ax1.set_ylabel("Reliability %")
+    ax1.legend()
+    st.pyplot(fig1)
     rel_fta = 100 if v_mean < 25 else 0
 
-# METHOD B: Monte Carlo (Probability Visualization)
-with col2:
-    st.subheader("Monte Carlo")
-    # Visualization: The "Confidence Bell Curve" rather than a raw histogram
-    from scipy.stats import norm
-    x_mc = np.linspace(v_mean - (3*v_std), v_mean + (3*v_std), 100)
-    y_mc = norm.pdf(x_mc, v_mean, v_std)
-    fig_mc, ax_mc = plt.subplots()
-    ax_mc.plot(x_mc, y_mc, color='#3498db', linewidth=2)
-    ax_mc.fill_between(x_mc, y_mc, color='#3498db', alpha=0.3, label="Failure Risk Zone")
-    ax_mc.set_title("Stochastic Risk Distribution")
-    ax_mc.set_xlabel("Simulated Wind Scenarios")
-    st.pyplot(fig_mc)
-    rel_mc = (1 - (v_std / v_mean)) * 100 if v_mean > 0 else 0
+# B. Monte Carlo (Normal Distribution Curve)
+with c2:
+    st.write("### Monte Carlo")
+    # Using a Bell Curve to show Probability Density (No Histogram)
+    x_mc = np.linspace(v_mean - 10, v_mean + 10, 100)
+    y_mc = (1 / (v_std * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_mc - v_mean) / v_std)**2)
+    fig2, ax2 = plt.subplots()
+    ax2.plot(x_mc, y_mc, color='#3498db', linewidth=2, label='Failure Probability')
+    ax2.fill_between(x_mc, y_mc, color='#3498db', alpha=0.3)
+    ax2.axvline(v_mean, color='red', linestyle='--')
+    ax2.set_title("Stochastic Risk Distribution")
+    st.pyplot(fig2)
+    rel_mc = max(0, 100 - (v_std / v_mean * 100))
 
-# METHOD C: Markov Chain (State Visualization)
-with col3:
-    st.subheader("Markov Chain")
-    # Visualization: Pie Chart of current state transition probabilities
-    p_healthy = np.exp(-0.03 * v_mean)
-    p_degraded = (1 - p_healthy) * 0.7
-    p_fail = (1 - p_healthy) * 0.3
-    fig_mar, ax_mar = plt.subplots()
-    ax_mar.pie([p_healthy, p_degraded, p_fail], 
-               labels=['Healthy', 'Wear', 'Critical'], 
-               colors=['#2ecc71', '#f1c40f', '#e74c3c'], 
-               autopct='%1.1f%%', startangle=90, explode=(0.1, 0, 0))
-    ax_mar.set_title("State Transition Probability")
-    st.pyplot(fig_mar)
-    rel_markov = p_healthy * 100
+# C. Markov Chain (State Decay Curve)
+with c3:
+    st.write("### Markov Chain")
+    x_mar = np.linspace(0, 50, 100)
+    y_mar = np.exp(-0.04 * x_mar) * 100 # Exponential Decay
+    fig3, ax3 = plt.subplots()
+    ax3.plot(x_mar, y_mar, color='orange', linewidth=2, label='State Reliability')
+    ax3.axvline(v_mean, color='red', linestyle='--')
+    ax3.set_ylabel("Reliability %")
+    ax3.legend()
+    st.pyplot(fig3)
+    rel_mar = np.exp(-0.04 * v_mean) * 100
 
-st.markdown("---")
+st.divider()
 
-# --- 5. TIER 3: BAR COMPARISON & COMPONENTS ---
-st.header("3. Final Comparison & Component Failure")
-c_left, c_right = st.columns([2, 1])
+# --- 5. COMPONENT FAILURE & COMPARISON ---
+st.header("3. Component Failure & Comparison Bar Graph")
+col_left, col_right = st.columns([1, 2])
 
-with c_left:
-    # BAR GRAPH TO COMPARE ALL 3
-    methods = ["Fault Tree", "Monte Carlo", "Markov Chain"]
-    scores = [rel_fta, rel_mc, rel_markov]
-    
-    fig_bar, ax_bar = plt.subplots(figsize=(8, 5))
-    bar_plot = ax_bar.bar(methods, scores, color=['#34495e', '#3498db', '#e67e22'])
-    ax_bar.set_ylim(0, 110)
-    ax_bar.set_ylabel("Reliability Score (%)")
-    ax_bar.set_title("Reliability Method Comparison")
-    
-    # Adding text labels on bars
-    for bar in bar_plot:
-        h = bar.get_height()
-        ax_bar.text(bar.get_x() + bar.get_width()/2, h + 2, f"{h:.1f}%", ha='center', weight='bold')
-    
-    st.pyplot(fig_bar)
-
-with c_right:
-    # COMPONENT FAILURE TABLE
+with col_left:
     st.write("#### Component Failure Risk")
-    # Simulated component risks based on wind pressure
-    b_risk = (v_mean/35)**2
-    g_risk = (v_mean/45)**2
-    gen_risk = (v_mean/50)**2
-    
+    # Calculated risk for specific parts
+    b_risk = (v_mean/32)**2; g_risk = (v_mean/42)**2; gen_risk = (v_mean/48)**2
     comp_df = pd.DataFrame({
         "Component": ["Blades", "Gearbox", "Generator"],
         "Risk %": [f"{b_risk:.1%}", f"{g_risk:.1%}", f"{gen_risk:.1%}"],
-        "Status": ["Safe" if b_risk < 0.15 else "Review", "Safe", "Safe"]
+        "Condition": ["SAFE" if b_risk < 0.2 else "WARN", "SAFE", "SAFE"]
     })
     st.table(comp_df)
+
+with col_right:
+    # BAR GRAPH TO COMPARE ALL 3
+    methods = ["Fault Tree", "Monte Carlo", "Markov Chain"]
+    scores = [rel_fta, rel_mc, rel_mar]
+    fig_bar, ax_bar = plt.subplots(figsize=(8, 4))
+    bars = ax_bar.bar(methods, scores, color=['#2c3e50', '#3498db', '#e67e22'])
+    ax_bar.set_ylim(0, 110)
+    ax_bar.set_ylabel("Final Reliability %")
+    
+    # Adding values on top of bars
+    for bar in bars:
+        height = bar.get_height()
+        ax_bar.text(bar.get_x() + bar.get_width()/2, height + 2, f"{height:.1f}%", ha='center', fontweight='bold')
+    
+    st.pyplot(fig_bar)
