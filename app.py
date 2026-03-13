@@ -4,139 +4,109 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import norm
 import zipfile
-import io
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Wind Reliability Pipeline", layout="wide")
-
-st.title("🛡️ Wind Turbine Reliability: Engineering Pipeline")
+st.title("🛡️ Wind Turbine Reliability: End-to-End Pipeline")
 st.markdown("---")
 
-# --- STEP 1: DATA ACQUISITION ---
-st.header("Step 1: Data Acquisition (Input Layer)")
-uploaded_file = st.sidebar.file_uploader("Upload weather.csv.zip", type=["csv", "zip"])
+# --- STEP 1: DATA PROCESSING (Acquisition & Cleansing) ---
+st.header("Step 1: Data Processing")
+col_u1, col_u2 = st.columns(2)
 
-raw_df = None
+with col_u1:
+    st.subheader("A. Environmental Load")
+    weather_file = st.file_uploader("Upload weather.csv.zip", type=["zip", "csv"])
+with col_u2:
+    st.subheader("B. Maintenance Logs")
+    failure_file = st.file_uploader("Upload component_failures.csv", type=["csv"])
 
-if uploaded_file is not None:
+weather_df = None
+fail_df = None
+
+if weather_file and failure_file:
+    # Processing Logic
     try:
-        if uploaded_file.name.endswith('.zip'):
-            with zipfile.ZipFile(uploaded_file) as z:
-                # Find the specific weather.csv inside your zip
-                target_file = [f for f in z.namelist() if 'weather.csv' in f][0]
-                with z.open(target_file) as f:
-                    raw_df = pd.read_csv(f)
+        if weather_file.name.endswith('.zip'):
+            with zipfile.ZipFile(weather_file) as z:
+                target = [f for f in z.namelist() if 'weather.csv' in f][0]
+                with z.open(target) as f: weather_df = pd.read_csv(f)
         else:
-            raw_df = pd.read_csv(uploaded_file)
-            
-        st.success(f"✅ Successfully acquired Raw Data: {uploaded_file.name}")
-        st.write("**Raw Data Preview (First 5 Rows):**")
-        st.dataframe(raw_df.head(5))
+            weather_df = pd.read_csv(weather_file)
         
+        fail_df = pd.read_csv(failure_file)
+        
+        # Cleansing
+        weather_df.columns = weather_df.columns.str.strip()
+        weather_df['Date'] = pd.to_datetime(weather_df['Date'], dayfirst=True)
+        weather_2018 = weather_df[weather_df['Date'].dt.year == 2018].copy()
+        
+        st.success("✅ Data Processed: Normalization and Temporal Filtering Complete.")
     except Exception as e:
-        st.error(f"Error in Step 1: {e}")
-        st.stop()
+        st.error(f"Processing Error: {e}")
 
-# --- STEP 2: DATA CLEANSING & EVALUATION ---
-if raw_df is not None:
+# --- STEP 2: EXPLORATORY DATA ANALYSIS (EDA) ---
+if weather_df is not None and fail_df is not None:
     st.divider()
-    st.header("Step 2: Data Cleansing & Evaluation")
+    st.header("Step 2: Exploratory Data Analysis (EDA)")
     
-    clean_df = raw_df.copy()
-    clean_df.columns = clean_df.columns.str.strip() # Clean column names
-    
-    # 1. Date Handling
-    clean_df['Date'] = pd.to_datetime(clean_df['Date'], dayfirst=True)
-    # Filter for the most stable year in your data (2018)
-    clean_df = clean_df[clean_df['Date'].dt.year == 2018]
-    
-    # 2. Outlier Removal (Engineering Standards)
     wind_col = 'Wind speed (m/s)'
-    initial_len = len(clean_df)
-    clean_df = clean_df.dropna(subset=[wind_col])
-    # Removing speeds > 45 m/s (Sensory noise)
-    clean_df = clean_df[(clean_df[wind_col] >= 0) & (clean_df[wind_col] <= 45)]
+    v_mean = weather_2018[wind_col].mean()
     
-    c1, c2 = st.columns(2)
-    with c1:
-        st.write(f"**Cleansing Summary:**")
-        st.write(f"- Selected Period: Jan 2018 - Dec 2018")
-        st.write(f"- Rows Removed (Outliers/Nulls): {initial_len - len(clean_df)}")
-    with c2:
-        st.write("**Cleaned Descriptive Statistics:**")
-        st.write(clean_df[wind_col].describe())
-
-    # --- STEP 3: EDA (EXPLORATORY DATA ANALYSIS) ---
-    st.divider()
-    st.header("Step 3: Exploratory Data Analysis (EDA)")
     e1, e2 = st.columns(2)
-    
-    v_mean = clean_df[wind_col].mean()
-    v_std = clean_df[wind_col].std()
-
     with e1:
-        st.write("**Wind Distribution (Monsoon Impact)**")
-        fig1, ax1 = plt.subplots()
-        ax1.hist(clean_df[wind_col], bins=40, color='skyblue', edgecolor='black')
-        ax1.axvline(v_mean, color='red', label=f'Mean: {v_mean:.2f}')
-        ax1.legend()
-        st.pyplot(fig1)
-    
+        st.write("**Wind Distribution Modeling**")
+        fig, ax = plt.subplots()
+        ax.hist(weather_2018[wind_col], bins=50, color='teal', alpha=0.7)
+        ax.set_title("Annual Velocity Frequency")
+        st.pyplot(fig)
     with e2:
-        st.write("**Seasonal Velocity Trend**")
-        clean_df['Month'] = clean_df['Date'].dt.month
-        monthly = clean_df.groupby('Month')[wind_col].mean()
-        st.line_chart(monthly)
+        st.write("**Event Correlation (Wind vs. Failures)**")
+        fig2, ax2 = plt.subplots()
+        ax2.plot(weather_2018['Date'], weather_2018[wind_col], color='lightgray')
+        # Map failure dates
+        fail_dates = pd.to_datetime(fail_df['Date'])
+        for d in fail_dates:
+            ax2.axvline(d, color='red', linestyle='--', alpha=0.6)
+        st.pyplot(fig2)
 
-    # --- STEP 4: FAULT TREE ANALYSIS (FTA) ---
+    # --- STEP 3: DATA MODELING (FTA & Monte Carlo) ---
     st.divider()
-    st.header("Step 4: Fault Tree Analysis (FTA)")
+    st.header("Step 3: Data Modeling")
     
-    st.info("Logic: Top Event (System Failure) occurs if Wind Load > Cut-off (25 m/s) OR Vibration > Threshold.")
+    # Fault Tree Logic (Top Event)
+    reliability_fta = (1 - (len(fail_df) / 365)) * 100
     
-    # Simulate a Failure if Wind > 25 m/s (Standard Cut-out)
-    clean_df['FTA_Violation'] = clean_df[wind_col].apply(lambda x: 1 if x > 25 else 0)
-    total_violations = clean_df['FTA_Violation'].sum()
-    fta_reliability = ((len(clean_df) - total_violations) / len(clean_df)) * 100
-
-    col_fta1, col_fta2 = st.columns([2, 1])
-    with col_fta1:
-        # Step Function for FTA
-        x_fta = np.linspace(0, 40, 100)
-        y_fta = np.where(x_fta < 25, 100, 0)
-        fig_fta, ax_fta = plt.subplots(figsize=(8, 3))
-        ax_fta.step(x_fta, y_fta, where='post', color='black', linewidth=2)
-        ax_fta.fill_between(x_fta, y_fta, step="post", alpha=0.2, color='gray')
-        ax_fta.axvline(v_mean, color='red', linestyle='--', label='Current Mean Load')
-        ax_fta.set_title("FTA Logic: System Survival vs. Wind Velocity")
-        ax_fta.set_xlabel("Wind Speed (m/s)")
-        ax_fta.set_ylabel("System Status (100=OK)")
-        st.pyplot(fig_fta)
-
-    with col_fta2:
-        st.metric("FTA Reliability Score", f"{fta_reliability:.2f}%")
-        st.write(f"Critical Events Found: {total_violations}")
-        if total_violations > 0:
-            st.warning("Fault Tree detected limit violations in high-wind months.")
-
-    # --- STEP 5: FINAL EVALUATION ---
-    st.divider()
-    st.header("Step 5: Final Evaluation & Method Comparison")
-    
-    # Method B: Monte Carlo
+    # Monte Carlo (Gaussian Reliability)
+    v_std = weather_2018[wind_col].std()
     rel_mc = norm.cdf(25, v_mean, v_std) * 100
-    # Method C: Markov
-    rel_mar = np.exp(-0.02 * v_mean) * 100
-
-    methods = ["Fault Tree (FTA)", "Monte Carlo", "Markov Chain"]
-    scores = [fta_reliability, rel_mc, rel_mar]
     
-    fig_res, ax_res = plt.subplots(figsize=(10, 4))
-    ax_res.bar(methods, scores, color=['#2c3e50', '#3498db', '#e67e22'])
-    ax_res.set_ylim(0, 115)
-    for i, v in enumerate(scores):
-        ax_res.text(i, v + 2, f"{v:.1f}%", ha='center', fontweight='bold')
-    st.pyplot(fig_res)
+    m1, m2 = st.columns(2)
+    m1.metric("Fault Tree Reliability (Deterministic)", f"{reliability_fta:.2f}%")
+    m2.metric("Monte Carlo Reliability (Probabilistic)", f"{rel_mc:.2f}%")
+
+    # --- STEP 4: DATA ANALYSIS (NREL Benchmarking) ---
+    st.divider()
+    st.header("Step 4: Data Analysis (NREL GRD Comparison)")
+    
+    # Using percentages from NREL Gearbox Reliability Database (GRD) 
+    st.info("Comparing site-specific data to NREL GRD Benchmark (76% Bearings, 17% Gears).")
+    
+    gb_only = fail_df[fail_df['Component'] == 'Gearbox']
+    your_bearings = len(gb_only[gb_only['Failure_Mode'].str.contains('Bearing', case=False)])
+    
+    st.write(f"**Gearbox Bearing Contribution:** { (your_bearings/len(gb_only))*100 if len(gb_only)>0 else 0 :.1f}%")
+    st.progress((your_bearings/len(gb_only)) if len(gb_only)>0 else 0)
+
+    # --- STEP 5: DATA EVALUATION (Final Status) ---
+    st.divider()
+    st.header("Step 5: Data Evaluation")
+    
+    status = "STABLE" if reliability_fta > 95 else "CRITICAL"
+    color = "green" if status == "STABLE" else "red"
+    
+    st.subheader(f"System Health Status: :{color}[{status}]")
+    st.write(f"Based on the 2018 load profile, the system maintains a reliability of {reliability_fta:.2f}%.")
 
 else:
-    st.info("Please upload your 'weather.csv.zip' in the sidebar to begin Step 1.")
+    st.info("Please upload your files to initialize the pipeline.")
