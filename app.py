@@ -21,7 +21,7 @@ wind_stress_factor = st.sidebar.slider("Wind Load Increase (%)", 0, 50, 0)
 cut_in = st.sidebar.slider("Cut-in Wind Speed (m/s)", 1, 5, 3)
 cut_out = st.sidebar.slider("Cut-out Wind Speed (m/s)", 15, 30, 20)
 
-# --- SMART FILE LOADER ---
+# --- FIXED SMART FILE LOADER ---
 def load_file(file):
     import pandas as pd
     import zipfile
@@ -32,24 +32,30 @@ def load_file(file):
     name = file.name.lower()
 
     try:
+        # CSV
         if name.endswith(".csv"):
             return pd.read_csv(file)
 
+        # EXCEL (FIXED)
         elif name.endswith(".xlsx"):
-            return pd.read_excel(file)
+            return pd.read_excel(file, engine="openpyxl")
 
+        # TXT
         elif name.endswith(".txt"):
             return pd.read_csv(file, engine='python')
 
+        # ZIP
         elif name.endswith(".zip"):
             with zipfile.ZipFile(file) as z:
                 for f in z.namelist():
                     if f.endswith(".csv"):
                         return pd.read_csv(z.open(f))
                     elif f.endswith(".xlsx"):
-                        return pd.read_excel(z.open(f))
-    except:
-        st.error("Error reading file")
+                        return pd.read_excel(z.open(f), engine="openpyxl")
+
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
+        return None
 
     st.error("Unsupported format")
     return None
@@ -73,15 +79,19 @@ if weather_file and failure_file:
         weather_df.columns = weather_df.columns.str.strip()
         fail_df.columns = fail_df.columns.str.strip()
 
+        # DEBUG VIEW (VERY IMPORTANT)
+        st.write("Weather Columns:", weather_df.columns)
+        st.write("Failure Columns:", fail_df.columns)
+
         weather_df['Date'] = pd.to_datetime(weather_df['Date'], errors='coerce')
         fail_df['Date'] = pd.to_datetime(fail_df['Date'], errors='coerce')
 
-        weather_2018 = weather_df.dropna(subset=['Date'])
+        weather_df = weather_df.dropna(subset=['Date'])
 
         wind_col = 'Wind speed (m/s)'
 
-        v_mean = weather_2018[wind_col].mean()
-        v_std = weather_2018[wind_col].std()
+        v_mean = weather_df[wind_col].mean()
+        v_std = weather_df[wind_col].std()
 
         sim_mean = v_mean * (1 + wind_stress_factor / 100)
 
@@ -94,39 +104,53 @@ if weather_file and failure_file:
         # TAB 1: DATA
         # =========================
         with tab1:
-            st.dataframe(weather_2018.head())
+            st.dataframe(weather_df.head())
 
         # =========================
         # TAB 2: ADVANCED EDA
         # =========================
         with tab2:
-            st.subheader("📊 EDA")
+            st.subheader("📊 Exploratory Data Analysis")
 
-            st.write(weather_2018.describe())
+            st.write(weather_df.describe())
 
             col1, col2 = st.columns(2)
 
             with col1:
                 fig, ax = plt.subplots()
-                sns.histplot(weather_2018[wind_col], bins=30, kde=True, ax=ax)
+                sns.histplot(weather_df[wind_col], bins=30, kde=True, ax=ax)
+                ax.set_title("Wind Distribution")
                 st.pyplot(fig)
 
             with col2:
                 fig2, ax2 = plt.subplots()
-                sns.boxplot(x=weather_2018[wind_col], ax=ax2)
+                sns.boxplot(x=weather_df[wind_col], ax=ax2)
+                ax2.set_title("Outliers")
                 st.pyplot(fig2)
+
+            # Time series
+            fig3, ax3 = plt.subplots(figsize=(10, 4))
+            ax3.plot(weather_df['Date'], weather_df[wind_col])
+
+            for d in fail_df['Date']:
+                ax3.axvline(d, color='red', linestyle='--', alpha=0.5)
+
+            ax3.set_title("Wind vs Failures")
+            st.pyplot(fig3)
 
         # =========================
         # TAB 3: MODELING
         # =========================
         with tab3:
 
-            # 🔴 FTA (Binary Simulation)
+            st.subheader("🧬 Reliability Models")
+
+            # 🔴 FTA
             n_fta = 10000
             failures = 0
 
-            p_high = np.mean(weather_2018[wind_col] > cut_out)
-            p_low = np.mean(weather_2018[wind_col] < cut_in)
+            p_high = np.mean(weather_df[wind_col] > cut_out)
+            p_low = np.mean(weather_df[wind_col] < cut_in)
             p_wind = p_high + p_low
 
             p_gearbox = max(0.05, len(fail_df[fail_df['Component'] == 'Gearbox']) / 365)
@@ -152,7 +176,7 @@ if weather_file and failure_file:
             samples = np.random.weibull(k, n_sim) * c
             samples += np.random.normal(0, v_std * 1.8, n_sim)
 
-            # extreme wind
+            # extreme wind injection
             idx = np.random.choice(n_sim, int(0.08 * n_sim))
             samples[idx] *= 2
 
@@ -182,6 +206,8 @@ if weather_file and failure_file:
         # =========================
         with tab4:
 
+            st.subheader("🏁 Final Evaluation")
+
             lolp = np.mean((samples < cut_in) | (samples > cut_out)) * 100
 
             power = np.where(
@@ -201,4 +227,4 @@ if weather_file and failure_file:
         st.error(f"Error: {e}")
 
 else:
-    st.info("Upload both datasets")
+    st.info("Upload both datasets to begin.")
