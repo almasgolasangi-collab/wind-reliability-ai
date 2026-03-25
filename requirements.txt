@@ -1,6 +1,7 @@
 streamlit
+pandas
 numpy
 matplotlib
-pandas
 seaborn
+openpyxl
 scipy
