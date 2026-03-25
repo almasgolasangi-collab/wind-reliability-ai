@@ -3,125 +3,175 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from scipy.stats import norm
 import zipfile
 
-# --- 1. ENGINEERING SPECIFICATIONS ---
-def show_machine_specs():
-    st.sidebar.header("⚙️ Machine Specifications")
-    st.sidebar.write("**Gearbox Type:** 3-Stage (Planetary/Helical)")
-    st.sidebar.write("**Lubrication:** ISO VG 320")
-    st.sidebar.write("**Ref:** NREL Reliability Collaborative")
-    st.sidebar.divider()
-
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Wind Reliability AI Pipeline", layout="wide")
+st.set_page_config(
+    page_title="Wind Reliability AI Pipeline",
+    page_icon="wind_reliability_icon.ico",
+    layout="wide"
+)
+
 st.title("🛡️ Wind Turbine Reliability: Advanced Modeling Pipeline")
 
-# --- SIDEBAR SENSITIVITY ANALYSIS (The "Sir-Proof" Tool) ---
-show_machine_specs()
-st.sidebar.header("🛠️ Sensitivity Simulation")
-st.sidebar.info("Adjust load parameters to see real-time reliability impact.")
-wind_stress_factor = st.sidebar.slider("Simulate Wind Load Increase (%)", 0, 50, 0)
+# --- SIDEBAR ---
+st.sidebar.title("⚙️ Controls")
 
-# --- STEP 1: DATA UPLOAD ---
-st.header("Step 1: Data Acquisition")
-col_u1, col_u2 = st.columns(2)
-with col_u1:
-    weather_file = st.file_uploader("Upload weather.csv.zip", type=["zip", "csv"])
-with col_u2:
-    failure_file = st.file_uploader("Upload component_failures.csv", type=["csv"])
+wind_stress_factor = st.sidebar.slider("Wind Load Increase (%)", 0, 50, 0)
+cut_in = st.sidebar.slider("Cut-in Wind Speed (m/s)", 1, 5, 3)
+cut_out = st.sidebar.slider("Cut-out Wind Speed (m/s)", 20, 30, 25)
+
+# --- FILE UPLOAD ---
+st.header("Step 1: Data Upload")
+
+weather_file = st.file_uploader("Upload weather.csv or .zip", type=["csv", "zip"])
+failure_file = st.file_uploader("Upload component_failures.csv", type=["csv"])
 
 if weather_file and failure_file:
+
     try:
-        # --- DATA CLEANSING LOGIC ---
+        # --- LOAD DATA ---
         if weather_file.name.endswith('.zip'):
             with zipfile.ZipFile(weather_file) as z:
-                target = [f for f in z.namelist() if 'weather.csv' in f][0]
-                with z.open(target) as f: weather_df = pd.read_csv(f)
+                file = [f for f in z.namelist() if 'weather.csv' in f][0]
+                with z.open(file) as f:
+                    weather_df = pd.read_csv(f)
         else:
             weather_df = pd.read_csv(weather_file)
-        
+
         fail_df = pd.read_csv(failure_file)
+
+        # --- CLEANING ---
         weather_df.columns = weather_df.columns.str.strip()
         fail_df.columns = fail_df.columns.str.strip()
+
         weather_df['Date'] = pd.to_datetime(weather_df['Date'], dayfirst=True)
         fail_df['Date'] = pd.to_datetime(fail_df['Date'])
+
         weather_2018 = weather_df[weather_df['Date'].dt.year == 2018].copy()
-        
-        # --- APP TABS (Organized Engineering Workflow) ---
-        tab1, tab2, tab3, tab4 = st.tabs(["🧹 Data Cleansing", "📊 EDA", "🧬 Reliability Modeling", "🏁 Final Evaluation"])
 
+        wind_col = 'Wind speed (m/s)'
+
+        v_mean = weather_2018[wind_col].mean()
+        v_std = weather_2018[wind_col].std()
+
+        # --- APPLY STRESS ---
+        sim_mean = v_mean * (1 + wind_stress_factor / 100)
+
+        # --- TABS ---
+        tab1, tab2, tab3, tab4 = st.tabs(
+            ["🧹 Data", "📊 EDA", "🧬 Modeling", "🏁 Final"]
+        )
+
+        # =========================
+        # TAB 1: DATA
+        # =========================
         with tab1:
-            st.subheader("Data Cleansing Results")
-            st.write("Headers stripped, Dates standardized to ISO-8601, and 2018 period isolated.")
-            c1, c2 = st.columns(2)
-            c1.dataframe(weather_2018.head(5))
-            c2.dataframe(fail_df.head(5))
-            csv = weather_2018.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Cleaned Dataset", data=csv, file_name="cleaned_data.csv")
+            st.subheader("Cleaned Data")
+            st.dataframe(weather_2018.head())
 
+        # =========================
+        # TAB 2: EDA
+        # =========================
         with tab2:
-            st.subheader("Exploratory Data Analysis")
-            wind_col = 'Wind speed (m/s)'
-            v_mean = weather_2018[wind_col].mean()
-            v_std = weather_2018[wind_col].std()
-            
-            e1, e2 = st.columns(2)
-            with e1:
+            col1, col2 = st.columns(2)
+
+            with col1:
                 fig, ax = plt.subplots()
-                sns.histplot(weather_2018[wind_col], bins=30, kde=True, color='teal', ax=ax)
-                ax.set_title("Wind Load Distribution")
+                sns.histplot(weather_2018[wind_col], bins=30, kde=True, ax=ax)
+                ax.set_title("Wind Distribution")
                 st.pyplot(fig)
-            with e2:
+
+            with col2:
                 fig2, ax2 = plt.subplots()
-                ax2.plot(weather_2018['Date'], weather_2018[wind_col], color='lightgray')
+                ax2.plot(weather_2018['Date'], weather_2018[wind_col])
+
                 for d in fail_df['Date']:
-                    ax2.axvline(d, color='red', linestyle='--', alpha=0.6)
-                ax2.set_title("Failures vs. Wind Timeline")
+                    ax2.axvline(d, color='red', linestyle='--')
+
+                ax2.set_title("Failures vs Time")
                 st.pyplot(fig2)
 
+        # =========================
+        # TAB 3: MODELING
+        # =========================
         with tab3:
-            st.subheader("Triple-Method Reliability Modeling")
-            
-            # 1. FTA (Deterministic)
-            rel_fta = (1 - (len(fail_df) / 365)) * 100
-            
-            # 2. Monte Carlo (Adjusted by Sidebar Slider)
-            sim_mean = v_mean * (1 + wind_stress_factor/100)
-            rel_mc = norm.cdf(25, sim_mean, v_std) * 100
-            
-            # 3. Markov Chain (Stochastic)
-            lambda_rate = len(fail_df) / 365
-            rel_markov = np.exp(-lambda_rate * 1) * 100
-            
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Fault Tree (Historical)", f"{rel_fta:.2f}%")
-            m2.metric("Monte Carlo (Probabilistic)", f"{rel_mc:.2f}%", f"{- (rel_mc - (norm.cdf(25, v_mean, v_std)*100)):.2f}% Stress Drop" if wind_stress_factor > 0 else None, delta_color="inverse")
-            m3.metric("Markov Chain (Steady State)", f"{rel_markov:.2f}%")
 
-            # Comparison Graph
-            st.divider()
-            models = ['FTA', 'Monte Carlo', 'Markov']
-            scores = [rel_fta, rel_mc, rel_markov]
-            fig_bar, ax_bar = plt.subplots(figsize=(10, 4))
-            sns.barplot(x=models, y=scores, palette='viridis', ax=ax_bar)
-            ax_bar.set_ylim(min(scores)-5, 100)
+            st.subheader("Advanced Reliability Models")
+
+            # 🔴 1. FAULT TREE ANALYSIS
+            p_wind = np.mean(weather_2018[wind_col] > cut_out)
+            p_gearbox = len(fail_df[fail_df['Component'] == 'Gearbox']) / 365
+            p_electrical = len(fail_df[fail_df['Component'] == 'Electrical']) / 365
+
+            p_and = p_wind * p_gearbox
+            p_total = p_and + p_electrical - (p_and * p_electrical)
+
+            rel_fta = (1 - p_total) * 100
+
+            # 🟢 2. TRUE MONTE CARLO
+            n_sim = 10000
+            samples = np.random.normal(sim_mean, v_std, n_sim)
+
+            safe_runs = np.sum(samples < cut_out)
+            rel_mc = (safe_runs / n_sim) * 100
+
+            # 🔵 3. MARKOV CHAIN
+            P = np.array([
+                [0.85, 0.10, 0.05],
+                [0.10, 0.75, 0.15],
+                [0.00, 0.00, 1.00]
+            ])
+
+            state = np.array([1, 0, 0])
+
+            for _ in range(10):
+                state = np.dot(state, P)
+
+            rel_markov = (state[0] + state[1]) * 100
+
+            # --- DISPLAY ---
+            c1, c2, c3 = st.columns(3)
+            c1.metric("FTA Reliability", f"{rel_fta:.2f}%")
+            c2.metric("Monte Carlo", f"{rel_mc:.2f}%")
+            c3.metric("Markov Chain", f"{rel_markov:.2f}%")
+
+            # --- GRAPH ---
+            fig_bar, ax_bar = plt.subplots()
+            ax_bar.bar(['FTA', 'Monte Carlo', 'Markov'],
+                       [rel_fta, rel_mc, rel_markov])
+            ax_bar.set_ylabel("Reliability (%)")
             st.pyplot(fig_bar)
 
+        # =========================
+        # TAB 4: FINAL
+        # =========================
         with tab4:
-            st.subheader("NREL Benchmark & Final Status")
-            gb_only = fail_df[fail_df['Component'] == 'Gearbox']
-            if not gb_only.empty:
-                bearing_ratio = (len(gb_only[gb_only['Failure_Mode'].str.contains('Bearing', case=False)]) / len(gb_only)) * 100
-                st.write(f"**Gearbox Bearing Failure Ratio:** {bearing_ratio:.1f}%")
-                st.progress(bearing_ratio / 100)
-                st.caption("NREL Benchmark: ~76% for this gearbox class.")
-            
+
+            st.subheader("Final Evaluation")
+
+            # 🟣 LOLP
+            lolp = np.mean((samples < cut_in) | (samples > cut_out)) * 100
+
+            # 🟢 WPG
+            power = np.where(
+                samples < cut_in, 0,
+                np.where(samples < cut_out, samples**3, 0)
+            )
+
+            wpg = np.mean(power)
+
+            col1, col2 = st.columns(2)
+            col1.metric("LOLP (%)", f"{lolp:.2f}")
+            col2.metric("Wind Power Index", f"{wpg:.2f}")
+
+            # --- FINAL STATUS ---
             status = "STABLE" if rel_fta > 95 else "CRITICAL"
-            st.header(f"Final Decision: :{ 'green' if status == 'STABLE' else 'red' }[{status}]")
+
+            st.header(f"Final Decision: {'🟢 STABLE' if status=='STABLE' else '🔴 CRITICAL'}")
 
     except Exception as e:
-        st.error(f"Logic Error: {e}")
+        st.error(f"Error: {e}")
+
 else:
-    st.info("Upload 2018 datasets to initialize the engineering pipeline.")
+    st.info("Upload both datasets to begin.")
