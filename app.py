@@ -70,35 +70,77 @@ if weather_file and failure_file:
             st.dataframe(weather_2018.head())
 
         # =========================
-        # TAB 2: EDA
+        # TAB 2: ADVANCED EDA
         # =========================
         with tab2:
+
+            st.subheader("📊 Advanced Exploratory Data Analysis")
+
+            # --- STATS ---
+            st.markdown("### 🔢 Statistical Summary")
+            st.write(weather_2018[wind_col].describe())
+
+            # --- DISTRIBUTION + BOXPLOT ---
+            st.markdown("### 📉 Distribution & Outliers")
             col1, col2 = st.columns(2)
 
             with col1:
-                fig, ax = plt.subplots()
-                sns.histplot(weather_2018[wind_col], bins=30, kde=True, ax=ax)
-                ax.set_title("Wind Distribution")
-                st.pyplot(fig)
+                fig1, ax1 = plt.subplots()
+                sns.histplot(weather_2018[wind_col], bins=30, kde=True, ax=ax1)
+                ax1.set_title("Wind Distribution")
+                st.pyplot(fig1)
 
             with col2:
                 fig2, ax2 = plt.subplots()
-                ax2.plot(weather_2018['Date'], weather_2018[wind_col])
-
-                for d in fail_df['Date']:
-                    ax2.axvline(d, color='red', linestyle='--')
-
-                ax2.set_title("Failures vs Time")
+                sns.boxplot(x=weather_2018[wind_col], ax=ax2)
+                ax2.set_title("Outlier Detection")
                 st.pyplot(fig2)
+
+            # --- TIME SERIES ---
+            st.markdown("### 📈 Wind vs Failures")
+
+            fig3, ax3 = plt.subplots(figsize=(10, 4))
+            ax3.plot(weather_2018['Date'], weather_2018[wind_col])
+
+            for d in fail_df['Date']:
+                ax3.axvline(d, color='red', linestyle='--', alpha=0.5)
+
+            st.pyplot(fig3)
+
+            # --- MONTHLY TREND ---
+            st.markdown("### 📅 Monthly Trend")
+
+            monthly_avg = weather_2018.groupby(weather_2018['Date'].dt.month)[wind_col].mean()
+
+            fig4, ax4 = plt.subplots()
+            monthly_avg.plot(marker='o', ax=ax4)
+            st.pyplot(fig4)
+
+            # --- FAILURE INSIGHT ---
+            st.markdown("### ⚠️ Failure Insight")
+
+            failure_days = weather_2018[weather_2018['Date'].isin(fail_df['Date'])]
+
+            if not failure_days.empty:
+                avg_failure = failure_days[wind_col].mean()
+                avg_normal = weather_2018[wind_col].mean()
+
+                st.write(f"Failure Wind Avg: {avg_failure:.2f}")
+                st.write(f"Normal Wind Avg: {avg_normal:.2f}")
+
+                if avg_failure > avg_normal:
+                    st.warning("Failures linked to high wind")
+                else:
+                    st.info("Failures likely due to other factors")
 
         # =========================
         # TAB 3: MODELING
         # =========================
         with tab3:
 
-            st.subheader("Advanced Reliability Models")
+            st.subheader("🧬 Reliability Modeling")
 
-            # 🔴 FAULT TREE (Binary Simulation)
+            # 🔴 FTA (Binary Simulation)
             n_fta = 10000
             failures = 0
 
@@ -121,7 +163,7 @@ if weather_file and failure_file:
 
             rel_fta = (1 - failures / n_fta) * 100
 
-            # 🟢 MONTE CARLO (Weibull + Turbulence)
+            # 🟢 MONTE CARLO
             n_sim = 10000
             k = 2
             c = sim_mean
@@ -132,7 +174,7 @@ if weather_file and failure_file:
             safe_runs = np.sum((samples >= cut_in) & (samples <= cut_out))
             rel_mc = (safe_runs / n_sim) * 100
 
-            # 🔵 MARKOV CHAIN
+            # 🔵 MARKOV
             P = np.array([
                 [0.85, 0.10, 0.05],
                 [0.10, 0.75, 0.15],
@@ -146,31 +188,20 @@ if weather_file and failure_file:
 
             rel_markov = (state[0] + state[1]) * 100
 
-            # --- DISPLAY ---
             c1, c2, c3 = st.columns(3)
-            c1.metric("FTA Reliability", f"{rel_fta:.2f}%")
+            c1.metric("FTA", f"{rel_fta:.2f}%")
             c2.metric("Monte Carlo", f"{rel_mc:.2f}%")
-            c3.metric("Markov Chain", f"{rel_markov:.2f}%")
-
-            # --- GRAPH ---
-            fig_bar, ax_bar = plt.subplots()
-            ax_bar.bar(['FTA', 'Monte Carlo', 'Markov'],
-                       [rel_fta, rel_mc, rel_markov])
-            ax_bar.set_ylabel("Reliability (%)")
-            ax_bar.set_title("Reliability Comparison")
-            st.pyplot(fig_bar)
+            c3.metric("Markov", f"{rel_markov:.2f}%")
 
         # =========================
         # TAB 4: FINAL
         # =========================
         with tab4:
 
-            st.subheader("Final Evaluation")
+            st.subheader("🏁 Final Evaluation")
 
-            # LOLP
             lolp = np.mean((samples < cut_in) | (samples > cut_out)) * 100
 
-            # WPG
             power = np.where(
                 samples < cut_in, 0,
                 np.where(samples < cut_out, samples**3, 0)
@@ -180,7 +211,7 @@ if weather_file and failure_file:
 
             col1, col2 = st.columns(2)
             col1.metric("LOLP (%)", f"{lolp:.2f}")
-            col2.metric("Wind Power Index", f"{wpg:.2f}")
+            col2.metric("WPG", f"{wpg:.2f}")
 
             status = "STABLE" if rel_fta > 90 else "CRITICAL"
 
@@ -190,4 +221,4 @@ if weather_file and failure_file:
         st.error(f"Error: {e}")
 
 else:
-    st.info("Upload both datasets to begin.")
+    st.info("Upload datasets to begin.")
