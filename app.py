@@ -14,7 +14,7 @@ st.title("🛡️ Wind Turbine Reliability: Research-Level Modeling")
 st.sidebar.header("⚙️ Simulation Controls")
 wind_stress_factor = st.sidebar.slider("Wind Load Increase (%)", 0, 50, 0)
 
-# --- UPLOAD ---
+# --- FILE UPLOAD ---
 col1, col2 = st.columns(2)
 weather_file = col1.file_uploader("Upload weather.csv.zip", type=["zip", "csv"])
 failure_file = col2.file_uploader("Upload failures.csv", type=["csv"])
@@ -36,10 +36,15 @@ if weather_file and failure_file:
         fail_df['Date'] = pd.to_datetime(fail_df['Date'])
 
         weather_2018 = weather_df[weather_df['Date'].dt.year == 2018]
-
         wind_col = [c for c in weather_2018.columns if 'wind' in c.lower()][0]
 
-        tab1, tab2, tab3 = st.tabs(["📊 EDA", "🧠 Modeling", "📈 Results"])
+        # --- TABS ---
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "📊 EDA",
+            "🧩 Modeling",
+            "🧠 Reliability",
+            "📈 Results"
+        ])
 
         # =========================
         # 📊 EDA
@@ -49,21 +54,68 @@ if weather_file and failure_file:
 
             fig, ax = plt.subplots()
             sns.histplot(weather_2018[wind_col], kde=True, ax=ax)
+            ax.set_title("Wind Speed Distribution")
             st.pyplot(fig)
 
         # =========================
-        # 🧠 MODELING
+        # 🧩 MODELING
+        # =========================
+        with tab2:
+            st.subheader("System Modeling")
+
+            # --- Wind Turbine Power Curve ---
+            st.markdown("### 🌬️ Wind Turbine Power Model")
+
+            v = np.linspace(0, 25, 100)
+            power = np.piecewise(
+                v,
+                [v < 3, (v >= 3) & (v < 12), (v >= 12) & (v < 25), v >= 25],
+                [0,
+                 lambda v: (v-3)/(12-3),
+                 1,
+                 0]
+            )
+
+            fig, ax = plt.subplots()
+            ax.plot(v, power)
+            ax.set_title("Power Curve")
+            st.pyplot(fig)
+
+            # --- Component Availability ---
+            st.markdown("### ⚙️ Component Model")
+
+            components = {
+                "Electrical": (3, 1.5),
+                "Sensor": (2, 1.4),
+                "Blade": (1, 2.5)
+            }
+
+            avail = []
+            for name, (lam, mu) in components.items():
+                A = mu / (lam + mu)
+                avail.append(A)
+                st.write(f"{name} Availability = {A:.3f}")
+
+            eta = np.prod(avail)
+            st.success(f"System Availability (η): {eta:.3f}")
+
+            # --- Markov States ---
+            st.markdown("### 🔄 Wind States")
+
+            wind = weather_2018[wind_col].values
+            states = np.digitize(wind, bins=[5, 12])
+            st.bar_chart(pd.Series(states).value_counts().sort_index())
+
+        # =========================
+        # 🧠 RELIABILITY
         # =========================
         with tab3:
-
-            st.subheader("Advanced Reliability Modeling")
+            st.subheader("Reliability Models")
 
             v_mean = weather_2018[wind_col].mean()
             v_std = weather_2018[wind_col].std()
 
-            # ======================
-            # 1. FTA (Improved)
-            # ======================
+            # --- FTA ---
             total_days = 365
 
             def failure_rate(keyword):
@@ -73,55 +125,35 @@ if weather_file and failure_file:
                     ]) / total_days
                 return 0.02
 
-            λ_bearing = failure_rate("Bearing")
-            λ_elec = failure_rate("Electrical")
-            λ_mech = failure_rate("Mechanical")
+            λ1 = failure_rate("Bearing")
+            λ2 = failure_rate("Electrical")
+            λ3 = failure_rate("Mechanical")
 
-            # Convert λ → probability
-            P_bearing = 1 - np.exp(-λ_bearing)
-            P_elec = 1 - np.exp(-λ_elec)
-            P_mech = 1 - np.exp(-λ_mech)
+            P1 = 1 - np.exp(-λ1)
+            P2 = 1 - np.exp(-λ2)
+            P3 = 1 - np.exp(-λ3)
 
-            # OR gate
-            P_or = 1 - ((1 - P_bearing)*(1 - P_elec)*(1 - P_mech))
+            P_or = 1 - ((1-P1)*(1-P2)*(1-P3))
+            P_and = P1*P2*P3
+            P_fail = P_or + P_and - (P_or*P_and)
 
-            # AND gate
-            P_and = P_bearing * P_elec * P_mech
+            rel_fta = (1 - P_fail) * 100
 
-            P_failure = P_or + P_and - (P_or * P_and)
-            rel_fta = (1 - P_failure) * 100
-
-            # ======================
-            # 2. WEIBULL AGING
-            # ======================
-            wind_data = weather_2018[wind_col].dropna()
-            shape, loc, scale = weibull_min.fit(wind_data)
-
+            # --- Weibull ---
+            shape, loc, scale = weibull_min.fit(weather_2018[wind_col])
             rel_weibull = weibull_min.cdf(25, shape, loc, scale) * 100
 
-            # Aging curve
-            t = np.linspace(0, 10, 100)
-            aging_curve = np.exp(-(t/scale)**shape)
-
-            # ======================
-            # 3. MONTE CARLO (REAL)
-            # ======================
-            simulations = 1000
-            results = []
-
-            for _ in range(simulations):
+            # --- Monte Carlo ---
+            sim = 1000
+            mc = []
+            for _ in range(sim):
                 sample = np.random.normal(v_mean*(1+wind_stress_factor/100), v_std)
-                results.append(sample < 25)
+                mc.append(sample < 25)
 
-            rel_mc = np.mean(results) * 100
+            rel_mc = np.mean(mc) * 100
 
-            # ======================
-            # 4. MARKOV (DATA-DRIVEN)
-            # ======================
-            wind = weather_2018[wind_col].values
-
-            states = np.digitize(wind, bins=[5, 12])  # 0,1,2
-
+            # --- Markov ---
+            states = np.digitize(weather_2018[wind_col], bins=[5,12])
             M = np.zeros((3,3))
 
             for i in range(len(states)-1):
@@ -135,65 +167,44 @@ if weather_file and failure_file:
 
             markov_rel = (1 - P[0]) * 100
 
-            # ======================
-            # 5. COMPONENT AVAILABILITY
-            # ======================
-            components = [
-                (3,1.5),
-                (2,1.4),
-                (1,2.5)
-            ]
+            # --- Display ---
+            c1,c2,c3,c4 = st.columns(4)
+            c1.metric("FTA", f"{rel_fta:.2f}%")
+            c2.metric("Monte Carlo", f"{rel_mc:.2f}%")
+            c3.metric("Markov", f"{markov_rel:.2f}%")
+            c4.metric("Weibull", f"{rel_weibull:.2f}%")
 
-            A_system = np.prod([mu/(lam+mu) for lam,mu in components])
-            FOR = (1 - A_system) * 100
+        # =========================
+        # 📈 RESULTS
+        # =========================
+        with tab4:
+            st.subheader("Final Results")
 
-            # ======================
-            # 6. LOLP (IMPORTANT)
-            # ======================
-            demand = np.percentile(wind, 60)
-            LOLP = np.mean(wind < demand) * 100
+            # Availability
+            A_sys = eta
+            FOR = (1 - A_sys) * 100
 
-            # ======================
-            # FINAL RELIABILITY
-            # ======================
-            final_rel = (
-                0.3*rel_fta +
-                0.3*rel_mc +
-                0.2*markov_rel +
-                0.2*rel_weibull
-            )
+            # LOLP
+            demand = np.percentile(weather_2018[wind_col], 60)
+            LOLP = np.mean(weather_2018[wind_col] < demand) * 100
 
-            # ======================
-            # DISPLAY
-            # ======================
-            m1,m2,m3,m4 = st.columns(4)
+            # Final Reliability
+            final_rel = (0.3*rel_fta + 0.3*rel_mc + 0.2*markov_rel + 0.2*rel_weibull)
 
-            m1.metric("FTA", f"{rel_fta:.2f}%")
-            m2.metric("Monte Carlo", f"{rel_mc:.2f}%")
-            m3.metric("Markov", f"{markov_rel:.2f}%")
-            m4.metric("Weibull", f"{rel_weibull:.2f}%")
-
-            st.divider()
-
-            m5,m6 = st.columns(2)
-            m5.metric("Availability", f"{A_system*100:.2f}%")
-            m6.metric("FOR", f"{FOR:.2f}%")
-
+            st.metric("Final Reliability", f"{final_rel:.2f}%")
+            st.metric("Availability", f"{A_sys*100:.2f}%")
+            st.metric("FOR", f"{FOR:.2f}%")
             st.metric("LOLP", f"{LOLP:.2f}%")
 
-            st.header(f"Final Reliability: {final_rel:.2f}%")
-
-            # ======================
-            # PLOTS
-            # ======================
-            st.subheader("Weibull Aging Curve")
-            fig2, ax2 = plt.subplots()
-            ax2.plot(t, aging_curve)
-            ax2.set_title("Reliability vs Time")
-            st.pyplot(fig2)
+            if final_rel > 95:
+                st.success("System Stable")
+            elif final_rel > 85:
+                st.warning("System Moderate Risk")
+            else:
+                st.error("System Critical")
 
     except Exception as e:
         st.error(e)
 
 else:
-    st.info("Upload datasets to start")
+    st.info("Upload datasets to start analysis")
