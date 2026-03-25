@@ -3,45 +3,49 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy.stats import norm, weibull_min
 import zipfile
 
-# --- PAGE CONFIG ---
-st.set_page_config(
-    page_title="Wind Reliability AI Pipeline",
-    page_icon="wind_reliability_icon.ico",
-    layout="wide"
-)
+# --- MACHINE SPECS ---
+def show_machine_specs():
+    st.sidebar.header("⚙️ Machine Specifications")
+    st.sidebar.write("**Gearbox Type:** 3-Stage (Planetary/Helical)")
+    st.sidebar.write("**Lubrication:** ISO VG 320")
+    st.sidebar.write("**Ref:** NREL Reliability Collaborative")
+    st.sidebar.divider()
 
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="Wind Reliability AI Pipeline", layout="wide")
 st.title("🛡️ Wind Turbine Reliability: Advanced Modeling Pipeline")
 
 # --- SIDEBAR ---
-st.sidebar.title("⚙️ Controls")
+show_machine_specs()
+st.sidebar.header("🛠️ Sensitivity Simulation")
+wind_stress_factor = st.sidebar.slider("Simulate Wind Load Increase (%)", 0, 50, 0)
 
-wind_stress_factor = st.sidebar.slider("Wind Load Increase (%)", 0, 50, 0)
-cut_in = st.sidebar.slider("Cut-in Wind Speed (m/s)", 1, 5, 3)
-cut_out = st.sidebar.slider("Cut-out Wind Speed (m/s)", 20, 30, 25)
+# --- DATA UPLOAD ---
+st.header("Step 1: Data Acquisition")
+col_u1, col_u2 = st.columns(2)
 
-# --- FILE UPLOAD ---
-st.header("Step 1: Data Upload")
-
-weather_file = st.file_uploader("Upload weather.csv or .zip", type=["csv", "zip"])
-failure_file = st.file_uploader("Upload component_failures.csv", type=["csv"])
+with col_u1:
+    weather_file = st.file_uploader("Upload weather.csv.zip", type=["zip", "csv"])
+with col_u2:
+    failure_file = st.file_uploader("Upload component_failures.csv", type=["csv"])
 
 if weather_file and failure_file:
-
     try:
-        # --- LOAD DATA ---
+        # --- LOAD WEATHER ---
         if weather_file.name.endswith('.zip'):
             with zipfile.ZipFile(weather_file) as z:
-                file = [f for f in z.namelist() if 'weather.csv' in f][0]
-                with z.open(file) as f:
+                target = [f for f in z.namelist() if 'weather.csv' in f][0]
+                with z.open(target) as f:
                     weather_df = pd.read_csv(f)
         else:
             weather_df = pd.read_csv(weather_file)
 
         fail_df = pd.read_csv(failure_file)
 
-        # --- CLEANING ---
+        # --- CLEAN ---
         weather_df.columns = weather_df.columns.str.strip()
         fail_df.columns = fail_df.columns.str.strip()
 
@@ -50,175 +54,177 @@ if weather_file and failure_file:
 
         weather_2018 = weather_df[weather_df['Date'].dt.year == 2018].copy()
 
-        wind_col = 'Wind speed (m/s)'
-
-        v_mean = weather_2018[wind_col].mean()
-        v_std = weather_2018[wind_col].std()
-
-        sim_mean = v_mean * (1 + wind_stress_factor / 100)
+        # --- WIND COLUMN AUTO DETECT ---
+        wind_col = [c for c in weather_2018.columns if 'wind' in c.lower()][0]
 
         # --- TABS ---
-        tab1, tab2, tab3, tab4 = st.tabs(
-            ["🧹 Data", "📊 EDA", "🧬 Modeling", "🏁 Final"]
-        )
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "🧹 Data Cleansing",
+            "📊 EDA",
+            "🧬 Reliability Modeling",
+            "🏁 Final Evaluation"
+        ])
 
         # =========================
-        # TAB 1: DATA
+        # TAB 1: CLEANING
         # =========================
         with tab1:
-            st.subheader("Cleaned Data")
-            st.dataframe(weather_2018.head())
+            st.subheader("Data Cleansing")
+            c1, c2 = st.columns(2)
+            c1.dataframe(weather_2018.head())
+            c2.dataframe(fail_df.head())
+
+            csv = weather_2018.to_csv(index=False).encode('utf-8')
+            st.download_button("📥 Download Cleaned Data", csv, "cleaned_data.csv")
 
         # =========================
-        # TAB 2: ADVANCED EDA
+        # TAB 2: EDA
         # =========================
         with tab2:
+            st.subheader("Exploratory Analysis")
 
-            st.subheader("📊 Advanced Exploratory Data Analysis")
+            v_mean = weather_2018[wind_col].mean()
+            v_std = weather_2018[wind_col].std()
 
-            # --- STATS ---
-            st.markdown("### 🔢 Statistical Summary")
-            st.write(weather_2018[wind_col].describe())
+            e1, e2 = st.columns(2)
 
-            # --- DISTRIBUTION + BOXPLOT ---
-            st.markdown("### 📉 Distribution & Outliers")
-            col1, col2 = st.columns(2)
+            with e1:
+                fig, ax = plt.subplots()
+                sns.histplot(weather_2018[wind_col], kde=True, ax=ax)
+                ax.set_title("Wind Speed Distribution")
+                st.pyplot(fig)
 
-            with col1:
-                fig1, ax1 = plt.subplots()
-                sns.histplot(weather_2018[wind_col], bins=30, kde=True, ax=ax1)
-                ax1.set_title("Wind Distribution")
-                st.pyplot(fig1)
-
-            with col2:
+            with e2:
                 fig2, ax2 = plt.subplots()
-                sns.boxplot(x=weather_2018[wind_col], ax=ax2)
-                ax2.set_title("Outlier Detection")
+                ax2.plot(weather_2018['Date'], weather_2018[wind_col])
+                for d in fail_df['Date']:
+                    ax2.axvline(d, color='red', linestyle='--')
+                ax2.set_title("Failures vs Time")
                 st.pyplot(fig2)
 
-            # --- TIME SERIES ---
-            st.markdown("### 📈 Wind vs Failures")
-
-            fig3, ax3 = plt.subplots(figsize=(10, 4))
-            ax3.plot(weather_2018['Date'], weather_2018[wind_col])
-
-            for d in fail_df['Date']:
-                ax3.axvline(d, color='red', linestyle='--', alpha=0.5)
-
-            st.pyplot(fig3)
-
-            # --- MONTHLY TREND ---
-            st.markdown("### 📅 Monthly Trend")
-
-            monthly_avg = weather_2018.groupby(weather_2018['Date'].dt.month)[wind_col].mean()
-
-            fig4, ax4 = plt.subplots()
-            monthly_avg.plot(marker='o', ax=ax4)
-            st.pyplot(fig4)
-
-            # --- FAILURE INSIGHT ---
-            st.markdown("### ⚠️ Failure Insight")
-
-            failure_days = weather_2018[weather_2018['Date'].isin(fail_df['Date'])]
-
-            if not failure_days.empty:
-                avg_failure = failure_days[wind_col].mean()
-                avg_normal = weather_2018[wind_col].mean()
-
-                st.write(f"Failure Wind Avg: {avg_failure:.2f}")
-                st.write(f"Normal Wind Avg: {avg_normal:.2f}")
-
-                if avg_failure > avg_normal:
-                    st.warning("Failures linked to high wind")
-                else:
-                    st.info("Failures likely due to other factors")
-
         # =========================
-        # TAB 3: MODELING
+        # TAB 3: RELIABILITY MODEL
         # =========================
         with tab3:
+            st.subheader("Advanced Reliability Modeling")
 
-            st.subheader("🧬 Reliability Modeling")
+            # -------------------------
+            # 1. FTA (REAL IMPLEMENTATION)
+            # -------------------------
+            total_days = 365
 
-            # 🔴 FTA (Binary Simulation)
-            n_fta = 10000
-            failures = 0
+            def get_prob(keyword):
+                if 'Failure_Mode' in fail_df.columns:
+                    return len(fail_df[
+                        fail_df['Failure_Mode'].str.contains(keyword, case=False, na=False)
+                    ]) / total_days
+                return 0.05  # fallback
 
-            p_high = np.mean(weather_2018[wind_col] > cut_out)
-            p_low = np.mean(weather_2018[wind_col] < cut_in)
-            p_wind = p_high + p_low
+            P_bearing = get_prob("Bearing")
+            P_electrical = get_prob("Electrical")
+            P_mechanical = get_prob("Mechanical")
 
-            p_gearbox = max(0.01, len(fail_df[fail_df['Component'] == 'Gearbox']) / 365)
-            p_electrical = max(0.01, len(fail_df[fail_df['Component'] == 'Electrical']) / 365)
+            # OR gate
+            P_or = 1 - ((1 - P_bearing) * (1 - P_electrical) * (1 - P_mechanical))
 
-            for _ in range(n_fta):
-                event_wind = np.random.rand() < p_wind
-                event_gearbox = np.random.rand() < p_gearbox
-                event_electrical = np.random.rand() < p_electrical
+            # AND gate
+            P_and = P_bearing * P_electrical * P_mechanical
 
-                failure = (event_wind and event_gearbox) or event_electrical
+            # System failure
+            P_system_failure = P_or + P_and - (P_or * P_and)
 
-                if failure:
-                    failures += 1
+            rel_fta = (1 - P_system_failure) * 100
 
-            rel_fta = (1 - failures / n_fta) * 100
+            # -------------------------
+            # 2. WEIBULL AGING
+            # -------------------------
+            wind_data = weather_2018[wind_col].dropna()
+            shape, loc, scale = weibull_min.fit(wind_data)
 
-            # 🟢 MONTE CARLO
-            n_sim = 10000
-            k = 2
-            c = sim_mean
+            rel_weibull = weibull_min.cdf(25, shape, loc, scale) * 100
 
-            samples = np.random.weibull(k, n_sim) * c
-            samples += np.random.normal(0, v_std * 0.5, n_sim)
+            # -------------------------
+            # 3. MONTE CARLO
+            # -------------------------
+            sim_mean = v_mean * (1 + wind_stress_factor / 100)
+            rel_mc = norm.cdf(25, sim_mean, v_std) * 100
 
-            safe_runs = np.sum((samples >= cut_in) & (samples <= cut_out))
-            rel_mc = (safe_runs / n_sim) * 100
-
-            # 🔵 MARKOV
-            P = np.array([
-                [0.85, 0.10, 0.05],
-                [0.10, 0.75, 0.15],
-                [0.00, 0.00, 1.00]
+            # -------------------------
+            # 4. MARKOV MODEL
+            # -------------------------
+            M = np.array([
+                [0.7, 0.2, 0.1],
+                [0.2, 0.6, 0.2],
+                [0.1, 0.3, 0.6]
             ])
 
-            state = np.array([1, 0, 0])
+            P = np.array([1/3, 1/3, 1/3])
+            for _ in range(50):
+                P = np.dot(P, M)
 
-            for _ in range(10):
-                state = np.dot(state, P)
+            markov_rel = (P[1] + P[2]) * 100
 
-            rel_markov = (state[0] + state[1]) * 100
+            # -------------------------
+            # 5. COMPONENT AVAILABILITY
+            # -------------------------
+            lambda_i = 2
+            mu_i = 1.5
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("FTA", f"{rel_fta:.2f}%")
-            c2.metric("Monte Carlo", f"{rel_mc:.2f}%")
-            c3.metric("Markov", f"{rel_markov:.2f}%")
+            A_i = mu_i / (lambda_i + mu_i)
+            FOR = (1 - A_i) * 100
+
+            # -------------------------
+            # DISPLAY
+            # -------------------------
+            m1, m2, m3, m4 = st.columns(4)
+
+            m1.metric("FTA", f"{rel_fta:.2f}%")
+            m2.metric("Weibull", f"{rel_weibull:.2f}%")
+            m3.metric("Monte Carlo", f"{rel_mc:.2f}%")
+            m4.metric("Markov", f"{markov_rel:.2f}%")
+
+            st.divider()
+
+            m5, m6 = st.columns(2)
+            m5.metric("Availability", f"{A_i*100:.2f}%")
+            m6.metric("FOR", f"{FOR:.2f}%")
+
+            # -------------------------
+            # FINAL RELIABILITY
+            # -------------------------
+            final_rel = (rel_fta + rel_mc + markov_rel + rel_weibull) / 4
+
+            st.header(f"Overall Reliability: {final_rel:.2f}%")
+
+            if final_rel > 95:
+                status = "STABLE"
+            elif final_rel > 85:
+                status = "WARNING"
+            else:
+                status = "CRITICAL"
+
+            st.subheader(f"System Status: {status}")
 
         # =========================
         # TAB 4: FINAL
         # =========================
         with tab4:
+            st.subheader("Final Evaluation")
 
-            st.subheader("🏁 Final Evaluation")
+            gb_only = fail_df[fail_df['Component'] == 'Gearbox']
 
-            lolp = np.mean((samples < cut_in) | (samples > cut_out)) * 100
+            if not gb_only.empty and 'Failure_Mode' in gb_only.columns:
+                bearing_ratio = len(
+                    gb_only[gb_only['Failure_Mode'].str.contains('Bearing', case=False)]
+                ) / len(gb_only) * 100
 
-            power = np.where(
-                samples < cut_in, 0,
-                np.where(samples < cut_out, samples**3, 0)
-            )
+                st.metric("Bearing Failure Ratio", f"{bearing_ratio:.1f}%")
+                st.progress(bearing_ratio / 100)
 
-            wpg = np.mean(power)
-
-            col1, col2 = st.columns(2)
-            col1.metric("LOLP (%)", f"{lolp:.2f}")
-            col2.metric("WPG", f"{wpg:.2f}")
-
-            status = "STABLE" if rel_fta > 90 else "CRITICAL"
-
-            st.header(f"Final Decision: {'🟢 STABLE' if status=='STABLE' else '🔴 CRITICAL'}")
+            st.success("Pipeline Executed Successfully")
 
     except Exception as e:
         st.error(f"Error: {e}")
 
 else:
-    st.info("Upload datasets to begin.")
+    st.info("Upload datasets to start analysis")
