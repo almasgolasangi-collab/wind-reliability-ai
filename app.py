@@ -8,7 +8,6 @@ import zipfile
 # --- PAGE CONFIG ---
 st.set_page_config(
     page_title="Wind Reliability AI Pipeline",
-    page_icon="wind_reliability_icon.ico",
     layout="wide"
 )
 
@@ -23,28 +22,17 @@ cut_out = st.sidebar.slider("Cut-out Wind Speed (m/s)", 15, 30, 20)
 
 # --- FIXED SMART FILE LOADER ---
 def load_file(file):
-    import pandas as pd
-    import zipfile
-
     if file is None:
         return None
 
     name = file.name.lower()
-
     try:
-        # CSV
         if name.endswith(".csv"):
             return pd.read_csv(file)
-
-        # EXCEL (FIXED)
         elif name.endswith(".xlsx"):
             return pd.read_excel(file, engine="openpyxl")
-
-        # TXT
         elif name.endswith(".txt"):
             return pd.read_csv(file, engine='python')
-
-        # ZIP
         elif name.endswith(".zip"):
             with zipfile.ZipFile(file) as z:
                 for f in z.namelist():
@@ -52,179 +40,148 @@ def load_file(file):
                         return pd.read_csv(z.open(f))
                     elif f.endswith(".xlsx"):
                         return pd.read_excel(z.open(f), engine="openpyxl")
-
     except Exception as e:
         st.error(f"Error reading file: {e}")
         return None
-
-    st.error("Unsupported format")
     return None
 
 # --- FILE UPLOAD ---
 st.header("Step 1: Upload Data")
 
-weather_file = st.file_uploader("Upload Weather Data", type=["csv", "xlsx", "txt", "zip"])
-failure_file = st.file_uploader("Upload Failure Data", type=["csv", "xlsx", "txt"])
+col_u1, col_u2 = st.columns(2)
+with col_u1:
+    weather_file = st.file_uploader("Upload Weather Data", type=["csv", "xlsx", "txt", "zip"])
+with col_u2:
+    failure_file = st.file_uploader("Upload Failure Data", type=["csv", "xlsx", "txt"])
 
 if weather_file and failure_file:
-
     weather_df = load_file(weather_file)
     fail_df = load_file(failure_file)
 
-    if weather_df is None or fail_df is None:
-        st.stop()
+    if weather_df is not None and fail_df is not None:
+        try:
+            # --- CLEANING & VALIDATION ---
+            weather_df.columns = weather_df.columns.str.strip()
+            fail_df.columns = fail_df.columns.str.strip()
 
-    try:
-        # --- CLEANING ---
-        weather_df.columns = weather_df.columns.str.strip()
-        fail_df.columns = fail_df.columns.str.strip()
+            # Process Weather Date (Required for Time Series)
+            if 'Date' in weather_df.columns:
+                weather_df['Date'] = pd.to_datetime(weather_df['Date'], errors='coerce')
+                weather_df = weather_df.dropna(subset=['Date'])
+            else:
+                st.error("Critical Error: 'Date' column not found in Weather Data.")
+                st.stop()
 
-        # DEBUG VIEW (VERY IMPORTANT)
-        st.write("Weather Columns:", weather_df.columns)
-        st.write("Failure Columns:", fail_df.columns)
+            # Process Failure Date (Optional fallback to prevent KeyError)
+            has_fail_date = 'Date' in fail_df.columns
+            if has_fail_date:
+                fail_df['Date'] = pd.to_datetime(fail_df['Date'], errors='coerce')
+            
+            wind_col = 'Wind speed (m/s)'
+            if wind_col not in weather_df.columns:
+                st.error(f"Column '{wind_col}' not found in weather data.")
+                st.stop()
 
-        weather_df['Date'] = pd.to_datetime(weather_df['Date'], errors='coerce')
-        fail_df['Date'] = pd.to_datetime(fail_df['Date'], errors='coerce')
+            v_mean = weather_df[wind_col].mean()
+            v_std = weather_df[wind_col].std()
+            sim_mean = v_mean * (1 + wind_stress_factor / 100)
 
-        weather_df = weather_df.dropna(subset=['Date'])
+            # --- TABS ---
+            tab1, tab2, tab3, tab4 = st.tabs(["🧹 Data", "📊 EDA", "🧬 Modeling", "🏁 Final"])
 
-        wind_col = 'Wind speed (m/s)'
+            with tab1:
+                st.subheader("Raw Weather Data")
+                st.dataframe(weather_df.head())
+                st.subheader("Raw Failure Data")
+                st.dataframe(fail_df.head())
 
-        v_mean = weather_df[wind_col].mean()
-        v_std = weather_df[wind_col].std()
+            with tab2:
+                st.subheader("📊 Exploratory Data Analysis")
+                st.write(weather_df.describe())
 
-        sim_mean = v_mean * (1 + wind_stress_factor / 100)
+                c1, c2 = st.columns(2)
+                with c1:
+                    fig, ax = plt.subplots()
+                    sns.histplot(weather_df[wind_col], bins=30, kde=True, ax=ax)
+                    ax.set_title("Wind Distribution")
+                    st.pyplot(fig)
+                with c2:
+                    fig2, ax2 = plt.subplots()
+                    sns.boxplot(x=weather_df[wind_col], ax=ax2)
+                    ax2.set_title("Outliers")
+                    st.pyplot(fig2)
 
-        # --- TABS ---
-        tab1, tab2, tab3, tab4 = st.tabs(
-            ["🧹 Data", "📊 EDA", "🧬 Modeling", "🏁 Final"]
-        )
+                # Time series with conditional failure markers
+                fig3, ax3 = plt.subplots(figsize=(10, 4))
+                ax3.plot(weather_df['Date'], weather_df[wind_col], label='Wind Speed')
+                
+                if has_fail_date:
+                    for d in fail_df['Date'].dropna():
+                        ax3.axvline(d, color='red', linestyle='--', alpha=0.5)
+                    st.caption("🔴 Red dashed lines indicate failure events.")
+                else:
+                    st.warning("Failure markers skipped: No 'Date' column in failure dataset.")
+                
+                ax3.set_title("Wind Speed Over Time")
+                st.pyplot(fig3)
 
-        # =========================
-        # TAB 1: DATA
-        # =========================
-        with tab1:
-            st.dataframe(weather_df.head())
+            with tab3:
+                st.subheader("🧬 Reliability Models")
+                
+                # FTA Logic
+                n_fta = 10000
+                p_high = np.mean(weather_df[wind_col] > cut_out)
+                p_low = np.mean(weather_df[wind_col] < cut_in)
+                p_wind = p_high + p_low
 
-        # =========================
-        # TAB 2: ADVANCED EDA
-        # =========================
-        with tab2:
-            st.subheader("📊 Exploratory Data Analysis")
+                # Check for 'Component' column before filtering
+                if 'Component' in fail_df.columns:
+                    p_gearbox = max(0.05, len(fail_df[fail_df['Component'] == 'Gearbox']) / 365)
+                    p_electrical = max(0.04, len(fail_df[fail_df['Component'] == 'Electrical']) / 365)
+                else:
+                    p_gearbox, p_electrical = 0.05, 0.04 # Fallback defaults
 
-            st.write(weather_df.describe())
+                failures = 0
+                for _ in range(n_fta):
+                    event_wind = np.random.rand() < p_wind
+                    event_gearbox = np.random.rand() < event_wind # Simplified logic
+                    event_electrical = np.random.rand() < p_electrical
+                    if (event_wind and event_gearbox) or event_electrical:
+                        failures += 1
+                
+                rel_fta = (1 - failures / n_fta) * 100
 
-            col1, col2 = st.columns(2)
+                # Monte Carlo
+                n_sim = 10000
+                samples = np.random.weibull(2, n_sim) * sim_mean
+                samples += np.random.normal(0, v_std * 1.8, n_sim)
+                safe = np.sum((samples >= cut_in) & (samples <= cut_out))
+                rel_mc = (safe / n_sim) * 100
 
-            with col1:
-                fig, ax = plt.subplots()
-                sns.histplot(weather_df[wind_col], bins=30, kde=True, ax=ax)
-                ax.set_title("Wind Distribution")
-                st.pyplot(fig)
+                # Markov
+                P = np.array([[0.85, 0.10, 0.05], [0.10, 0.75, 0.15], [0.00, 0.00, 1.00]])
+                state = np.array([1, 0, 0])
+                for _ in range(10): state = np.dot(state, P)
+                rel_markov = (state[0] + state[1]) * 100
 
-            with col2:
-                fig2, ax2 = plt.subplots()
-                sns.boxplot(x=weather_df[wind_col], ax=ax2)
-                ax2.set_title("Outliers")
-                st.pyplot(fig2)
+                mc1, mc2, mc3 = st.columns(3)
+                mc1.metric("FTA", f"{rel_fta:.2f}%")
+                mc2.metric("Monte Carlo", f"{rel_mc:.2f}%")
+                mc3.metric("Markov", f"{rel_markov:.2f}%")
 
-            # Time series
-            fig3, ax3 = plt.subplots(figsize=(10, 4))
-            ax3.plot(weather_df['Date'], weather_df[wind_col])
+            with tab4:
+                st.subheader("🏁 Final Evaluation")
+                lolp = np.mean((samples < cut_in) | (samples > cut_out)) * 100
+                power = np.where(samples < cut_in, 0, np.where(samples < cut_out, samples**3, 0))
+                wpg = np.mean(power)
 
-            for d in fail_df['Date']:
-                ax3.axvline(d, color='red', linestyle='--', alpha=0.5)
+                st.metric("Loss of Load Prob (LOLP)", f"{lolp:.2f}%")
+                st.metric("Wind Power Generation (WPG)", f"{wpg:.2f}")
 
-            ax3.set_title("Wind vs Failures")
-            st.pyplot(fig3)
+                status = "STABLE" if rel_fta > 90 else "CRITICAL"
+                st.header(f"System Status: {'🟢 STABLE' if status=='STABLE' else '🔴 CRITICAL'}")
 
-        # =========================
-        # TAB 3: MODELING
-        # =========================
-        with tab3:
-
-            st.subheader("🧬 Reliability Models")
-
-            # 🔴 FTA
-            n_fta = 10000
-            failures = 0
-
-            p_high = np.mean(weather_df[wind_col] > cut_out)
-            p_low = np.mean(weather_df[wind_col] < cut_in)
-            p_wind = p_high + p_low
-
-            p_gearbox = max(0.05, len(fail_df[fail_df['Component'] == 'Gearbox']) / 365)
-            p_electrical = max(0.04, len(fail_df[fail_df['Component'] == 'Electrical']) / 365)
-
-            for _ in range(n_fta):
-                event_wind = np.random.rand() < p_wind
-                event_gearbox = np.random.rand() < p_gearbox
-                event_electrical = np.random.rand() < p_electrical
-
-                failure = (event_wind and event_gearbox) or event_electrical
-
-                if failure:
-                    failures += 1
-
-            rel_fta = (1 - failures / n_fta) * 100
-
-            # 🟢 MONTE CARLO
-            n_sim = 10000
-            k = 2
-            c = sim_mean
-
-            samples = np.random.weibull(k, n_sim) * c
-            samples += np.random.normal(0, v_std * 1.8, n_sim)
-
-            # extreme wind injection
-            idx = np.random.choice(n_sim, int(0.08 * n_sim))
-            samples[idx] *= 2
-
-            safe = np.sum((samples >= cut_in) & (samples <= cut_out))
-            rel_mc = (safe / n_sim) * 100
-
-            # 🔵 MARKOV
-            P = np.array([
-                [0.85, 0.10, 0.05],
-                [0.10, 0.75, 0.15],
-                [0.00, 0.00, 1.00]
-            ])
-
-            state = np.array([1, 0, 0])
-            for _ in range(10):
-                state = np.dot(state, P)
-
-            rel_markov = (state[0] + state[1]) * 100
-
-            c1, c2, c3 = st.columns(3)
-            c1.metric("FTA", f"{rel_fta:.2f}%")
-            c2.metric("Monte Carlo", f"{rel_mc:.2f}%")
-            c3.metric("Markov", f"{rel_markov:.2f}%")
-
-        # =========================
-        # TAB 4: FINAL
-        # =========================
-        with tab4:
-
-            st.subheader("🏁 Final Evaluation")
-
-            lolp = np.mean((samples < cut_in) | (samples > cut_out)) * 100
-
-            power = np.where(
-                samples < cut_in, 0,
-                np.where(samples < cut_out, samples**3, 0)
-            )
-
-            wpg = np.mean(power)
-
-            st.metric("LOLP", f"{lolp:.2f}%")
-            st.metric("WPG", f"{wpg:.2f}")
-
-            status = "STABLE" if rel_fta > 90 else "CRITICAL"
-            st.header(f"Final: {'🟢 STABLE' if status=='STABLE' else '🔴 CRITICAL'}")
-
-    except Exception as e:
-        st.error(f"Error: {e}")
-
+        except Exception as e:
+            st.error(f"Execution Error: {e}")
 else:
-    st.info("Upload both datasets to begin.")
+    st.info("Please upload both Weather and Failure datasets to proceed.")
