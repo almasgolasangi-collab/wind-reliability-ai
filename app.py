@@ -3,125 +3,197 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from scipy.stats import norm
+from scipy.stats import norm, weibull_min
 import zipfile
 
-# --- 1. ENGINEERING SPECIFICATIONS ---
-def show_machine_specs():
-    st.sidebar.header("⚙️ Machine Specifications")
-    st.sidebar.write("**Gearbox Type:** 3-Stage (Planetary/Helical)")
-    st.sidebar.write("**Lubrication:** ISO VG 320")
-    st.sidebar.write("**Ref:** NREL Reliability Collaborative")
-    st.sidebar.divider()
-
-# --- PAGE CONFIG ---
+# --- CONFIG ---
 st.set_page_config(page_title="Wind Reliability AI Pipeline", layout="wide")
-st.title("🛡️ Wind Turbine Reliability: Advanced Modeling Pipeline")
+st.title("🛡️ Wind Turbine Reliability: Research-Level Modeling")
 
-# --- SIDEBAR SENSITIVITY ANALYSIS (The "Sir-Proof" Tool) ---
-show_machine_specs()
-st.sidebar.header("🛠️ Sensitivity Simulation")
-st.sidebar.info("Adjust load parameters to see real-time reliability impact.")
-wind_stress_factor = st.sidebar.slider("Simulate Wind Load Increase (%)", 0, 50, 0)
+# --- SIDEBAR ---
+st.sidebar.header("⚙️ Simulation Controls")
+wind_stress_factor = st.sidebar.slider("Wind Load Increase (%)", 0, 50, 0)
 
-# --- STEP 1: DATA UPLOAD ---
-st.header("Step 1: Data Acquisition")
-col_u1, col_u2 = st.columns(2)
-with col_u1:
-    weather_file = st.file_uploader("Upload weather.csv.zip", type=["zip", "csv"])
-with col_u2:
-    failure_file = st.file_uploader("Upload component_failures.csv", type=["csv"])
+# --- UPLOAD ---
+col1, col2 = st.columns(2)
+weather_file = col1.file_uploader("Upload weather.csv.zip", type=["zip", "csv"])
+failure_file = col2.file_uploader("Upload failures.csv", type=["csv"])
 
 if weather_file and failure_file:
     try:
-        # --- DATA CLEANSING LOGIC ---
+        # --- LOAD DATA ---
         if weather_file.name.endswith('.zip'):
             with zipfile.ZipFile(weather_file) as z:
                 target = [f for f in z.namelist() if 'weather.csv' in f][0]
-                with z.open(target) as f: weather_df = pd.read_csv(f)
+                with z.open(target) as f:
+                    weather_df = pd.read_csv(f)
         else:
             weather_df = pd.read_csv(weather_file)
-        
+
         fail_df = pd.read_csv(failure_file)
-        weather_df.columns = weather_df.columns.str.strip()
-        fail_df.columns = fail_df.columns.str.strip()
+
         weather_df['Date'] = pd.to_datetime(weather_df['Date'], dayfirst=True)
         fail_df['Date'] = pd.to_datetime(fail_df['Date'])
-        weather_2018 = weather_df[weather_df['Date'].dt.year == 2018].copy()
-        
-        # --- APP TABS (Organized Engineering Workflow) ---
-        tab1, tab2, tab3, tab4 = st.tabs(["🧹 Data Cleansing", "📊 EDA", "🧬 Reliability Modeling", "🏁 Final Evaluation"])
 
+        weather_2018 = weather_df[weather_df['Date'].dt.year == 2018]
+
+        wind_col = [c for c in weather_2018.columns if 'wind' in c.lower()][0]
+
+        tab1, tab2, tab3 = st.tabs(["📊 EDA", "🧠 Modeling", "📈 Results"])
+
+        # =========================
+        # 📊 EDA
+        # =========================
         with tab1:
-            st.subheader("Data Cleansing Results")
-            st.write("Headers stripped, Dates standardized to ISO-8601, and 2018 period isolated.")
-            c1, c2 = st.columns(2)
-            c1.dataframe(weather_2018.head(5))
-            c2.dataframe(fail_df.head(5))
-            csv = weather_2018.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Cleaned Dataset", data=csv, file_name="cleaned_data.csv")
+            st.subheader("Wind Data Analysis")
 
-        with tab2:
-            st.subheader("Exploratory Data Analysis")
-            wind_col = 'Wind speed (m/s)'
+            fig, ax = plt.subplots()
+            sns.histplot(weather_2018[wind_col], kde=True, ax=ax)
+            st.pyplot(fig)
+
+        # =========================
+        # 🧠 MODELING
+        # =========================
+        with tab3:
+
+            st.subheader("Advanced Reliability Modeling")
+
             v_mean = weather_2018[wind_col].mean()
             v_std = weather_2018[wind_col].std()
-            
-            e1, e2 = st.columns(2)
-            with e1:
-                fig, ax = plt.subplots()
-                sns.histplot(weather_2018[wind_col], bins=30, kde=True, color='teal', ax=ax)
-                ax.set_title("Wind Load Distribution")
-                st.pyplot(fig)
-            with e2:
-                fig2, ax2 = plt.subplots()
-                ax2.plot(weather_2018['Date'], weather_2018[wind_col], color='lightgray')
-                for d in fail_df['Date']:
-                    ax2.axvline(d, color='red', linestyle='--', alpha=0.6)
-                ax2.set_title("Failures vs. Wind Timeline")
-                st.pyplot(fig2)
 
-        with tab3:
-            st.subheader("Triple-Method Reliability Modeling")
-            
-            # 1. FTA (Deterministic)
-            rel_fta = (1 - (len(fail_df) / 365)) * 100
-            
-            # 2. Monte Carlo (Adjusted by Sidebar Slider)
-            sim_mean = v_mean * (1 + wind_stress_factor/100)
-            rel_mc = norm.cdf(25, sim_mean, v_std) * 100
-            
-            # 3. Markov Chain (Stochastic)
-            lambda_rate = len(fail_df) / 365
-            rel_markov = np.exp(-lambda_rate * 1) * 100
-            
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Fault Tree (Historical)", f"{rel_fta:.2f}%")
-            m2.metric("Monte Carlo (Probabilistic)", f"{rel_mc:.2f}%", f"{- (rel_mc - (norm.cdf(25, v_mean, v_std)*100)):.2f}% Stress Drop" if wind_stress_factor > 0 else None, delta_color="inverse")
-            m3.metric("Markov Chain (Steady State)", f"{rel_markov:.2f}%")
+            # ======================
+            # 1. FTA (Improved)
+            # ======================
+            total_days = 365
 
-            # Comparison Graph
+            def failure_rate(keyword):
+                if 'Failure_Mode' in fail_df.columns:
+                    return len(fail_df[
+                        fail_df['Failure_Mode'].str.contains(keyword, case=False, na=False)
+                    ]) / total_days
+                return 0.02
+
+            λ_bearing = failure_rate("Bearing")
+            λ_elec = failure_rate("Electrical")
+            λ_mech = failure_rate("Mechanical")
+
+            # Convert λ → probability
+            P_bearing = 1 - np.exp(-λ_bearing)
+            P_elec = 1 - np.exp(-λ_elec)
+            P_mech = 1 - np.exp(-λ_mech)
+
+            # OR gate
+            P_or = 1 - ((1 - P_bearing)*(1 - P_elec)*(1 - P_mech))
+
+            # AND gate
+            P_and = P_bearing * P_elec * P_mech
+
+            P_failure = P_or + P_and - (P_or * P_and)
+            rel_fta = (1 - P_failure) * 100
+
+            # ======================
+            # 2. WEIBULL AGING
+            # ======================
+            wind_data = weather_2018[wind_col].dropna()
+            shape, loc, scale = weibull_min.fit(wind_data)
+
+            rel_weibull = weibull_min.cdf(25, shape, loc, scale) * 100
+
+            # Aging curve
+            t = np.linspace(0, 10, 100)
+            aging_curve = np.exp(-(t/scale)**shape)
+
+            # ======================
+            # 3. MONTE CARLO (REAL)
+            # ======================
+            simulations = 1000
+            results = []
+
+            for _ in range(simulations):
+                sample = np.random.normal(v_mean*(1+wind_stress_factor/100), v_std)
+                results.append(sample < 25)
+
+            rel_mc = np.mean(results) * 100
+
+            # ======================
+            # 4. MARKOV (DATA-DRIVEN)
+            # ======================
+            wind = weather_2018[wind_col].values
+
+            states = np.digitize(wind, bins=[5, 12])  # 0,1,2
+
+            M = np.zeros((3,3))
+
+            for i in range(len(states)-1):
+                M[states[i], states[i+1]] += 1
+
+            M = M / M.sum(axis=1, keepdims=True)
+
+            P = np.array([1/3,1/3,1/3])
+            for _ in range(50):
+                P = P @ M
+
+            markov_rel = (1 - P[0]) * 100
+
+            # ======================
+            # 5. COMPONENT AVAILABILITY
+            # ======================
+            components = [
+                (3,1.5),
+                (2,1.4),
+                (1,2.5)
+            ]
+
+            A_system = np.prod([mu/(lam+mu) for lam,mu in components])
+            FOR = (1 - A_system) * 100
+
+            # ======================
+            # 6. LOLP (IMPORTANT)
+            # ======================
+            demand = np.percentile(wind, 60)
+            LOLP = np.mean(wind < demand) * 100
+
+            # ======================
+            # FINAL RELIABILITY
+            # ======================
+            final_rel = (
+                0.3*rel_fta +
+                0.3*rel_mc +
+                0.2*markov_rel +
+                0.2*rel_weibull
+            )
+
+            # ======================
+            # DISPLAY
+            # ======================
+            m1,m2,m3,m4 = st.columns(4)
+
+            m1.metric("FTA", f"{rel_fta:.2f}%")
+            m2.metric("Monte Carlo", f"{rel_mc:.2f}%")
+            m3.metric("Markov", f"{markov_rel:.2f}%")
+            m4.metric("Weibull", f"{rel_weibull:.2f}%")
+
             st.divider()
-            models = ['FTA', 'Monte Carlo', 'Markov']
-            scores = [rel_fta, rel_mc, rel_markov]
-            fig_bar, ax_bar = plt.subplots(figsize=(10, 4))
-            sns.barplot(x=models, y=scores, palette='viridis', ax=ax_bar)
-            ax_bar.set_ylim(min(scores)-5, 100)
-            st.pyplot(fig_bar)
 
-        with tab4:
-            st.subheader("NREL Benchmark & Final Status")
-            gb_only = fail_df[fail_df['Component'] == 'Gearbox']
-            if not gb_only.empty:
-                bearing_ratio = (len(gb_only[gb_only['Failure_Mode'].str.contains('Bearing', case=False)]) / len(gb_only)) * 100
-                st.write(f"**Gearbox Bearing Failure Ratio:** {bearing_ratio:.1f}%")
-                st.progress(bearing_ratio / 100)
-                st.caption("NREL Benchmark: ~76% for this gearbox class.")
-            
-            status = "STABLE" if rel_fta > 95 else "CRITICAL"
-            st.header(f"Final Decision: :{ 'green' if status == 'STABLE' else 'red' }[{status}]")
+            m5,m6 = st.columns(2)
+            m5.metric("Availability", f"{A_system*100:.2f}%")
+            m6.metric("FOR", f"{FOR:.2f}%")
+
+            st.metric("LOLP", f"{LOLP:.2f}%")
+
+            st.header(f"Final Reliability: {final_rel:.2f}%")
+
+            # ======================
+            # PLOTS
+            # ======================
+            st.subheader("Weibull Aging Curve")
+            fig2, ax2 = plt.subplots()
+            ax2.plot(t, aging_curve)
+            ax2.set_title("Reliability vs Time")
+            st.pyplot(fig2)
 
     except Exception as e:
-        st.error(f"Logic Error: {e}")
+        st.error(e)
+
 else:
-    st.info("Upload 2018 datasets to initialize the engineering pipeline.")
+    st.info("Upload datasets to start")
