@@ -98,32 +98,37 @@ if weather_file and failure_file:
 
             st.subheader("Advanced Reliability Models")
 
-            # 🔴 FAULT TREE ANALYSIS (FIXED)
+            # 🔴 FAULT TREE (Binary Simulation)
+            n_fta = 10000
+            failures = 0
+
             p_high = np.mean(weather_2018[wind_col] > cut_out)
             p_low = np.mean(weather_2018[wind_col] < cut_in)
-
             p_wind = p_high + p_low
 
             p_gearbox = max(0.01, len(fail_df[fail_df['Component'] == 'Gearbox']) / 365)
             p_electrical = max(0.01, len(fail_df[fail_df['Component'] == 'Electrical']) / 365)
 
-            p_and = p_wind * p_gearbox
-            p_total = p_and + p_electrical - (p_and * p_electrical)
+            for _ in range(n_fta):
+                event_wind = np.random.rand() < p_wind
+                event_gearbox = np.random.rand() < p_gearbox
+                event_electrical = np.random.rand() < p_electrical
 
-            rel_fta = (1 - p_total) * 100
+                failure = (event_wind and event_gearbox) or event_electrical
 
-            # 🟢 TRUE MONTE CARLO (FIXED)
+                if failure:
+                    failures += 1
+
+            rel_fta = (1 - failures / n_fta) * 100
+
+            # 🟢 MONTE CARLO (Weibull + Turbulence)
             n_sim = 10000
-
-            # Weibull distribution (realistic wind)
             k = 2
             c = sim_mean
-            samples = np.random.weibull(k, n_sim) * c
 
-            # Add turbulence
+            samples = np.random.weibull(k, n_sim) * c
             samples += np.random.normal(0, v_std * 0.5, n_sim)
 
-            # Reliability condition
             safe_runs = np.sum((samples >= cut_in) & (samples <= cut_out))
             rel_mc = (safe_runs / n_sim) * 100
 
@@ -162,10 +167,10 @@ if weather_file and failure_file:
 
             st.subheader("Final Evaluation")
 
-            # 🟣 LOLP
+            # LOLP
             lolp = np.mean((samples < cut_in) | (samples > cut_out)) * 100
 
-            # 🟢 WPG
+            # WPG
             power = np.where(
                 samples < cut_in, 0,
                 np.where(samples < cut_out, samples**3, 0)
@@ -177,7 +182,6 @@ if weather_file and failure_file:
             col1.metric("LOLP (%)", f"{lolp:.2f}")
             col2.metric("Wind Power Index", f"{wpg:.2f}")
 
-            # FINAL STATUS
             status = "STABLE" if rel_fta > 90 else "CRITICAL"
 
             st.header(f"Final Decision: {'🟢 STABLE' if status=='STABLE' else '🔴 CRITICAL'}")
