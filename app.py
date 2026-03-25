@@ -19,36 +19,64 @@ st.sidebar.title("⚙️ Controls")
 
 wind_stress_factor = st.sidebar.slider("Wind Load Increase (%)", 0, 50, 0)
 cut_in = st.sidebar.slider("Cut-in Wind Speed (m/s)", 1, 5, 3)
-cut_out = st.sidebar.slider("Cut-out Wind Speed (m/s)", 20, 30, 25)
+cut_out = st.sidebar.slider("Cut-out Wind Speed (m/s)", 15, 30, 20)
+
+# --- SMART FILE LOADER ---
+def load_file(file):
+    import pandas as pd
+    import zipfile
+
+    if file is None:
+        return None
+
+    name = file.name.lower()
+
+    try:
+        if name.endswith(".csv"):
+            return pd.read_csv(file)
+
+        elif name.endswith(".xlsx"):
+            return pd.read_excel(file)
+
+        elif name.endswith(".txt"):
+            return pd.read_csv(file, engine='python')
+
+        elif name.endswith(".zip"):
+            with zipfile.ZipFile(file) as z:
+                for f in z.namelist():
+                    if f.endswith(".csv"):
+                        return pd.read_csv(z.open(f))
+                    elif f.endswith(".xlsx"):
+                        return pd.read_excel(z.open(f))
+    except:
+        st.error("Error reading file")
+
+    st.error("Unsupported format")
+    return None
 
 # --- FILE UPLOAD ---
-st.header("Step 1: Data Upload")
+st.header("Step 1: Upload Data")
 
-weather_file = st.file_uploader("Upload weather.csv or .zip", type=["csv", "zip"])
-failure_file = st.file_uploader("Upload component_failures.csv", type=["csv"])
+weather_file = st.file_uploader("Upload Weather Data", type=["csv", "xlsx", "txt", "zip"])
+failure_file = st.file_uploader("Upload Failure Data", type=["csv", "xlsx", "txt"])
 
 if weather_file and failure_file:
 
+    weather_df = load_file(weather_file)
+    fail_df = load_file(failure_file)
+
+    if weather_df is None or fail_df is None:
+        st.stop()
+
     try:
-        # --- LOAD DATA ---
-        if weather_file.name.endswith('.zip'):
-            with zipfile.ZipFile(weather_file) as z:
-                file = [f for f in z.namelist() if 'weather.csv' in f][0]
-                with z.open(file) as f:
-                    weather_df = pd.read_csv(f)
-        else:
-            weather_df = pd.read_csv(weather_file)
-
-        fail_df = pd.read_csv(failure_file)
-
         # --- CLEANING ---
         weather_df.columns = weather_df.columns.str.strip()
         fail_df.columns = fail_df.columns.str.strip()
 
-        weather_df['Date'] = pd.to_datetime(weather_df['Date'], dayfirst=True)
-        fail_df['Date'] = pd.to_datetime(fail_df['Date'])
+        weather_df['Date'] = pd.to_datetime(weather_df['Date'], errors='coerce')
+        fail_df['Date'] = pd.to_datetime(fail_df['Date'], errors='coerce')
 
-        weather_2018 = weather_df[weather_df['Date'].dt.year == 2018].copy()
+        weather_2018 = weather_df.dropna(subset=['Date'])
 
         wind_col = 'Wind speed (m/s)'
 
@@ -66,79 +94,32 @@ if weather_file and failure_file:
         # TAB 1: DATA
         # =========================
         with tab1:
-            st.subheader("Cleaned Data")
             st.dataframe(weather_2018.head())
 
         # =========================
         # TAB 2: ADVANCED EDA
         # =========================
         with tab2:
+            st.subheader("📊 EDA")
 
-            st.subheader("📊 Advanced Exploratory Data Analysis")
+            st.write(weather_2018.describe())
 
-            # --- STATS ---
-            st.markdown("### 🔢 Statistical Summary")
-            st.write(weather_2018[wind_col].describe())
-
-            # --- DISTRIBUTION + BOXPLOT ---
-            st.markdown("### 📉 Distribution & Outliers")
             col1, col2 = st.columns(2)
 
             with col1:
-                fig1, ax1 = plt.subplots()
-                sns.histplot(weather_2018[wind_col], bins=30, kde=True, ax=ax1)
-                ax1.set_title("Wind Distribution")
-                st.pyplot(fig1)
+                fig, ax = plt.subplots()
+                sns.histplot(weather_2018[wind_col], bins=30, kde=True, ax=ax)
+                st.pyplot(fig)
 
             with col2:
                 fig2, ax2 = plt.subplots()
                 sns.boxplot(x=weather_2018[wind_col], ax=ax2)
-                ax2.set_title("Outlier Detection")
                 st.pyplot(fig2)
-
-            # --- TIME SERIES ---
-            st.markdown("### 📈 Wind vs Failures")
-
-            fig3, ax3 = plt.subplots(figsize=(10, 4))
-            ax3.plot(weather_2018['Date'], weather_2018[wind_col])
-
-            for d in fail_df['Date']:
-                ax3.axvline(d, color='red', linestyle='--', alpha=0.5)
-
-            st.pyplot(fig3)
-
-            # --- MONTHLY TREND ---
-            st.markdown("### 📅 Monthly Trend")
-
-            monthly_avg = weather_2018.groupby(weather_2018['Date'].dt.month)[wind_col].mean()
-
-            fig4, ax4 = plt.subplots()
-            monthly_avg.plot(marker='o', ax=ax4)
-            st.pyplot(fig4)
-
-            # --- FAILURE INSIGHT ---
-            st.markdown("### ⚠️ Failure Insight")
-
-            failure_days = weather_2018[weather_2018['Date'].isin(fail_df['Date'])]
-
-            if not failure_days.empty:
-                avg_failure = failure_days[wind_col].mean()
-                avg_normal = weather_2018[wind_col].mean()
-
-                st.write(f"Failure Wind Avg: {avg_failure:.2f}")
-                st.write(f"Normal Wind Avg: {avg_normal:.2f}")
-
-                if avg_failure > avg_normal:
-                    st.warning("Failures linked to high wind")
-                else:
-                    st.info("Failures likely due to other factors")
 
         # =========================
         # TAB 3: MODELING
         # =========================
         with tab3:
-
-            st.subheader("🧬 Reliability Modeling")
 
             # 🔴 FTA (Binary Simulation)
             n_fta = 10000
@@ -148,8 +129,8 @@ if weather_file and failure_file:
             p_low = np.mean(weather_2018[wind_col] < cut_in)
             p_wind = p_high + p_low
 
-            p_gearbox = max(0.01, len(fail_df[fail_df['Component'] == 'Gearbox']) / 365)
-            p_electrical = max(0.01, len(fail_df[fail_df['Component'] == 'Electrical']) / 365)
+            p_gearbox = max(0.05, len(fail_df[fail_df['Component'] == 'Gearbox']) / 365)
+            p_electrical = max(0.04, len(fail_df[fail_df['Component'] == 'Electrical']) / 365)
 
             for _ in range(n_fta):
                 event_wind = np.random.rand() < p_wind
@@ -169,10 +150,14 @@ if weather_file and failure_file:
             c = sim_mean
 
             samples = np.random.weibull(k, n_sim) * c
-            samples += np.random.normal(0, v_std * 0.5, n_sim)
+            samples += np.random.normal(0, v_std * 1.8, n_sim)
 
-            safe_runs = np.sum((samples >= cut_in) & (samples <= cut_out))
-            rel_mc = (safe_runs / n_sim) * 100
+            # extreme wind
+            idx = np.random.choice(n_sim, int(0.08 * n_sim))
+            samples[idx] *= 2
+
+            safe = np.sum((samples >= cut_in) & (samples <= cut_out))
+            rel_mc = (safe / n_sim) * 100
 
             # 🔵 MARKOV
             P = np.array([
@@ -182,7 +167,6 @@ if weather_file and failure_file:
             ])
 
             state = np.array([1, 0, 0])
-
             for _ in range(10):
                 state = np.dot(state, P)
 
@@ -198,8 +182,6 @@ if weather_file and failure_file:
         # =========================
         with tab4:
 
-            st.subheader("🏁 Final Evaluation")
-
             lolp = np.mean((samples < cut_in) | (samples > cut_out)) * 100
 
             power = np.where(
@@ -209,16 +191,14 @@ if weather_file and failure_file:
 
             wpg = np.mean(power)
 
-            col1, col2 = st.columns(2)
-            col1.metric("LOLP (%)", f"{lolp:.2f}")
-            col2.metric("WPG", f"{wpg:.2f}")
+            st.metric("LOLP", f"{lolp:.2f}%")
+            st.metric("WPG", f"{wpg:.2f}")
 
             status = "STABLE" if rel_fta > 90 else "CRITICAL"
-
-            st.header(f"Final Decision: {'🟢 STABLE' if status=='STABLE' else '🔴 CRITICAL'}")
+            st.header(f"Final: {'🟢 STABLE' if status=='STABLE' else '🔴 CRITICAL'}")
 
     except Exception as e:
         st.error(f"Error: {e}")
 
 else:
-    st.info("Upload datasets to begin.")
+    st.info("Upload both datasets")
