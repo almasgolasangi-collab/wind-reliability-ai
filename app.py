@@ -55,7 +55,6 @@ if weather_file and failure_file:
         v_mean = weather_2018[wind_col].mean()
         v_std = weather_2018[wind_col].std()
 
-        # --- APPLY STRESS ---
         sim_mean = v_mean * (1 + wind_stress_factor / 100)
 
         # --- TABS ---
@@ -99,24 +98,36 @@ if weather_file and failure_file:
 
             st.subheader("Advanced Reliability Models")
 
-            # 🔴 1. FAULT TREE ANALYSIS
-            p_wind = np.mean(weather_2018[wind_col] > cut_out)
-            p_gearbox = len(fail_df[fail_df['Component'] == 'Gearbox']) / 365
-            p_electrical = len(fail_df[fail_df['Component'] == 'Electrical']) / 365
+            # 🔴 FAULT TREE ANALYSIS (FIXED)
+            p_high = np.mean(weather_2018[wind_col] > cut_out)
+            p_low = np.mean(weather_2018[wind_col] < cut_in)
+
+            p_wind = p_high + p_low
+
+            p_gearbox = max(0.01, len(fail_df[fail_df['Component'] == 'Gearbox']) / 365)
+            p_electrical = max(0.01, len(fail_df[fail_df['Component'] == 'Electrical']) / 365)
 
             p_and = p_wind * p_gearbox
             p_total = p_and + p_electrical - (p_and * p_electrical)
 
             rel_fta = (1 - p_total) * 100
 
-            # 🟢 2. TRUE MONTE CARLO
+            # 🟢 TRUE MONTE CARLO (FIXED)
             n_sim = 10000
-            samples = np.random.normal(sim_mean, v_std, n_sim)
 
-            safe_runs = np.sum(samples < cut_out)
+            # Weibull distribution (realistic wind)
+            k = 2
+            c = sim_mean
+            samples = np.random.weibull(k, n_sim) * c
+
+            # Add turbulence
+            samples += np.random.normal(0, v_std * 0.5, n_sim)
+
+            # Reliability condition
+            safe_runs = np.sum((samples >= cut_in) & (samples <= cut_out))
             rel_mc = (safe_runs / n_sim) * 100
 
-            # 🔵 3. MARKOV CHAIN
+            # 🔵 MARKOV CHAIN
             P = np.array([
                 [0.85, 0.10, 0.05],
                 [0.10, 0.75, 0.15],
@@ -141,6 +152,7 @@ if weather_file and failure_file:
             ax_bar.bar(['FTA', 'Monte Carlo', 'Markov'],
                        [rel_fta, rel_mc, rel_markov])
             ax_bar.set_ylabel("Reliability (%)")
+            ax_bar.set_title("Reliability Comparison")
             st.pyplot(fig_bar)
 
         # =========================
@@ -165,8 +177,8 @@ if weather_file and failure_file:
             col1.metric("LOLP (%)", f"{lolp:.2f}")
             col2.metric("Wind Power Index", f"{wpg:.2f}")
 
-            # --- FINAL STATUS ---
-            status = "STABLE" if rel_fta > 95 else "CRITICAL"
+            # FINAL STATUS
+            status = "STABLE" if rel_fta > 90 else "CRITICAL"
 
             st.header(f"Final Decision: {'🟢 STABLE' if status=='STABLE' else '🔴 CRITICAL'}")
 
