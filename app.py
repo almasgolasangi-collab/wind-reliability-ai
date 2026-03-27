@@ -45,11 +45,13 @@ if weather_file and failure_file:
 
         fail_df = pd.read_csv(failure_file)
 
-        # CLEAN
+        # CLEAN COLUMN NAMES
         weather_df.columns = weather_df.columns.str.strip()
         fail_df.columns = fail_df.columns.str.strip()
 
+        # ---------------------------
         # DATE DETECTION
+        # ---------------------------
         def get_date(df):
             for col in df.columns:
                 if "date" in col.lower() or "time" in col.lower():
@@ -66,7 +68,9 @@ if weather_file and failure_file:
         weather_df.dropna(subset=[weather_date], inplace=True)
         fail_df.dropna(subset=[fail_date], inplace=True)
 
-        # WIND COLUMN
+        # ---------------------------
+        # WIND COLUMN DETECTION
+        # ---------------------------
         def get_wind(df):
             for col in df.columns:
                 if col.upper() in ["WS10M", "WS50M"]:
@@ -79,7 +83,9 @@ if weather_file and failure_file:
         wind_col = get_wind(weather_df)
         weather_df.rename(columns={wind_col: "Wind"}, inplace=True)
 
+        # ---------------------------
         # YEAR FILTER
+        # ---------------------------
         year = st.selectbox("Select Year", sorted(weather_df[weather_date].dt.year.unique()))
 
         weather_year = weather_df[weather_df[weather_date].dt.year == year]
@@ -91,7 +97,9 @@ if weather_file and failure_file:
 
         daily_wind = weather_year["Wind"].resample('D').mean()
 
+        # ---------------------------
         # BASIC STATS
+        # ---------------------------
         total_days = len(daily_wind)
         total_hours = len(weather_year)
         failures = len(fail_year)
@@ -121,7 +129,9 @@ if weather_file and failure_file:
             st.write(f"Total Hours: {total_hours}")
             st.write(f"Failures: {failures}")
 
+        # ---------------------------
         # EDA
+        # ---------------------------
         with tab3:
             st.subheader("EDA")
 
@@ -136,7 +146,9 @@ if weather_file and failure_file:
             ax1.set_title("Wind Speed Distribution")
             st.pyplot(fig1)
 
+        # ---------------------------
         # VISUALIZATION
+        # ---------------------------
         with tab4:
             st.subheader("Wind vs Failures")
 
@@ -153,39 +165,55 @@ if weather_file and failure_file:
 
             st.pyplot(fig2)
 
+        # ---------------------------
         # MODELING (FINAL FIX)
+        # ---------------------------
         with tab5:
             st.subheader("Reliability Modeling")
 
-            if total_hours == 0:
+            if total_days == 0:
                 st.error("No data available")
                 st.stop()
 
-            # ✅ Minimum failure intensity (fix for 0/low failures)
-            min_lambda = 1 / (total_hours * 2)
-            lambda_rate = max(failures / total_hours, min_lambda)
+            # ✅ FAILURE RATE (per day)
+            min_lambda = 1 / (total_days * 2)
+            lambda_rate = max(failures / total_days, min_lambda)
 
-            mu = 1 / 72  # repair rate (3 days)
-            t = mission_time * 24  # convert to hours
+            # Repair rate (3 days repair time)
+            mu = 1 / 3
 
-            # FTA (Exponential)
+            # Mission time in DAYS
+            t = mission_time
+
+            # ---------------------------
+            # FTA (Exponential Reliability)
+            # ---------------------------
             rel_fta = np.exp(-lambda_rate * t) * 100
 
-            # Markov
+            # ---------------------------
+            # Markov Model
+            # ---------------------------
             rel_markov = (
                 (mu / (lambda_rate + mu)) +
                 (lambda_rate / (lambda_rate + mu)) * np.exp(-(lambda_rate + mu) * t)
             ) * 100
 
-            # Monte Carlo
+            # ---------------------------
+            # Monte Carlo (Improved)
+            # ---------------------------
             sim_mean = v_mean * (1 + wind_stress_factor / 100)
             samples = np.random.normal(sim_mean, v_std, 10000)
 
-            cut_out = 20
-            failures_mc = samples > cut_out
+            cut_out = 20  # turbine cut-out speed
 
-            rel_mc = (1 - np.mean(failures_mc)) * 100
+            stress_factor = samples / cut_out
+            failure_prob = np.clip(stress_factor, 0, 1)
 
+            rel_mc = (1 - np.mean(failure_prob)) * 100
+
+            # ---------------------------
+            # DISPLAY
+            # ---------------------------
             c1, c2, c3 = st.columns(3)
             c1.metric("FTA (Time-based)", f"{rel_fta:.2f}%")
             c2.metric("Markov", f"{rel_markov:.2f}%")
