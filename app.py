@@ -16,7 +16,7 @@ st.title("🛡️ Wind Turbine Reliability Analysis")
 # ---------------------------
 st.sidebar.header("⚙️ Controls")
 wind_stress_factor = st.sidebar.slider("Wind Stress Increase (%)", 0, 50, 0)
-mission_time = st.sidebar.slider("Mission Time (days)", 1, 60, 30)  # 🔥 important
+mission_time = st.sidebar.slider("Mission Time (days)", 1, 60, 30)
 
 # ---------------------------
 # FILE UPLOAD
@@ -30,7 +30,7 @@ with col2:
     failure_file = st.file_uploader("Upload Failure Data", type=["csv"])
 
 # ---------------------------
-# MAIN LOGIC
+# MAIN
 # ---------------------------
 if weather_file and failure_file:
     try:
@@ -85,13 +85,17 @@ if weather_file and failure_file:
         weather_year = weather_df[weather_df[weather_date].dt.year == year]
         fail_year = fail_df[fail_df[fail_date].dt.year == year]
 
-        # PROCESSING
+        # SORT + RESAMPLE
         weather_year = weather_year.sort_values(by=weather_date)
         weather_year = weather_year.set_index(weather_date)
 
         daily_wind = weather_year["Wind"].resample('D').mean()
 
+        # ---------------------------
+        # BASIC STATS
+        # ---------------------------
         total_days = len(daily_wind)
+        total_hours = len(weather_year)
         failures = len(fail_year)
 
         # ---------------------------
@@ -118,8 +122,9 @@ if weather_file and failure_file:
         # ---------------------------
         with tab2:
             st.subheader("Data Processing")
-            st.write(f"Selected Year: {year}")
+            st.write(f"Year: {year}")
             st.write(f"Total Days: {total_days}")
+            st.write(f"Total Hours: {total_hours}")
             st.write(f"Failures: {failures}")
 
         # ---------------------------
@@ -153,28 +158,34 @@ if weather_file and failure_file:
                 ax2.axvline(pd.to_datetime(d), alpha=0.3)
 
             ax2.set_title("Wind Speed vs Failures")
+            ax2.set_xlabel("Date")
+            ax2.set_ylabel("Wind Speed")
+
             st.pyplot(fig2)
 
         # ---------------------------
-        # MODELING (CORRECT)
+        # MODELING (FINAL FIX)
         # ---------------------------
         with tab5:
             st.subheader("Reliability Modeling")
 
-            # Avoid divide-by-zero
-            if total_days == 0:
+            if total_hours == 0:
                 st.error("No data available")
                 st.stop()
 
-            lambda_rate = failures / total_days
-            mu = 1 / 3  # repair rate
+            # 🔥 CORRECT FAILURE RATE (per hour)
+            lambda_rate = failures / total_hours
 
-            t = mission_time
+            # repair rate (3 days → hours)
+            mu = 1 / 72  
 
-            # -------- FTA (Exponential Reliability) --------
+            # 🔥 mission time in HOURS (IMPORTANT)
+            t = mission_time * 24  
+
+            # -------- FTA (Exponential) --------
             rel_fta = np.exp(-lambda_rate * t) * 100
 
-            # -------- MARKOV (Time-dependent) --------
+            # -------- MARKOV --------
             rel_markov = (
                 (mu / (lambda_rate + mu)) +
                 (lambda_rate / (lambda_rate + mu)) * np.exp(-(lambda_rate + mu) * t)
@@ -184,18 +195,18 @@ if weather_file and failure_file:
             sim_mean = v_mean * (1 + wind_stress_factor / 100)
             samples = np.random.normal(sim_mean, v_std, 10000)
 
-            cut_out = 20  # realistic failure condition
+            cut_out = 20
             failures_mc = samples > cut_out
 
             rel_mc = (1 - np.mean(failures_mc)) * 100
 
             c1, c2, c3 = st.columns(3)
             c1.metric("FTA (Time-based)", f"{rel_fta:.2f}%")
-            c2.metric("Markov (Dynamic)", f"{rel_markov:.2f}%")
+            c2.metric("Markov", f"{rel_markov:.2f}%")
             c3.metric("Monte Carlo", f"{rel_mc:.2f}%")
 
     except Exception as e:
         st.error(f"❌ Error: {e}")
 
 else:
-    st.info("Upload both datasets to start")
+    st.info("Upload both datasets to start analysis")
