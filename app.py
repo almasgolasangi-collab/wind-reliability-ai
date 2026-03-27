@@ -11,21 +11,50 @@ st.title("🛡️ Wind Turbine Reliability: Advanced Modeling Pipeline")
 
 # --- SIDEBAR ---
 st.sidebar.header("⚙️ Machine Specifications")
-st.sidebar.write("**Gearbox Type:** 3-Stage (Planetary/Helical)")
-st.sidebar.write("**Lubrication:** ISO VG 320")
-st.sidebar.divider()
+st.sidebar.write("Gearbox: 3-Stage")
+st.sidebar.write("Lubrication: ISO VG 320")
 
-st.sidebar.header("🛠️ Sensitivity Simulation")
+st.sidebar.header("🛠️ Sensitivity")
 wind_stress_factor = st.sidebar.slider("Wind Load Increase (%)", 0, 50, 0)
 
-# --- FILE UPLOAD ---
-st.header("Step 1: Data Acquisition")
+# =========================
+# HELPER FUNCTIONS (NEW 🔥)
+# =========================
+
+def find_date_column(df, name):
+    for col in df.columns:
+        if "date" in col.lower() or "time" in col.lower():
+            return col
+    st.error(f"❌ No Date/Time column found in {name}")
+    st.write("Columns found:", df.columns.tolist())
+    st.stop()
+
+def find_wind_column(df):
+    for col in df.columns:
+        if "wind" in col.lower():
+            return col
+    st.error("❌ No Wind Speed column found")
+    st.write("Columns found:", df.columns.tolist())
+    st.stop()
+
+def safe_datetime(df, col):
+    df[col] = pd.to_datetime(df[col], dayfirst=True, errors='coerce')
+    df = df.dropna(subset=[col])
+    return df
+
+# =========================
+# FILE UPLOAD
+# =========================
+
+st.header("Step 1: Upload Data")
 
 col1, col2 = st.columns(2)
+
 with col1:
-    weather_file = st.file_uploader("Upload weather.csv or zip", type=["csv", "zip"])
+    weather_file = st.file_uploader("Upload Weather Data", type=["csv", "zip"])
+
 with col2:
-    failure_file = st.file_uploader("Upload component_failures.csv", type=["csv"])
+    failure_file = st.file_uploader("Upload Failure Data", type=["csv"])
 
 if weather_file and failure_file:
     try:
@@ -42,55 +71,44 @@ if weather_file and failure_file:
 
         fail_df = pd.read_csv(failure_file)
 
-        # =========================
-        # CLEAN COLUMN NAMES
-        # =========================
+        # Clean column names
         weather_df.columns = weather_df.columns.str.strip()
         fail_df.columns = fail_df.columns.str.strip()
 
         # =========================
-        # ROBUST DATE HANDLING ✅
+        # SAFE COLUMN DETECTION
         # =========================
-        date_col_weather = [c for c in weather_df.columns if "date" in c.lower() or "time" in c.lower()][0]
-        date_col_fail = [c for c in fail_df.columns if "date" in c.lower()][0]
-
-        weather_df[date_col_weather] = pd.to_datetime(
-            weather_df[date_col_weather],
-            dayfirst=True,
-            errors='coerce'
-        )
-
-        fail_df[date_col_fail] = pd.to_datetime(
-            fail_df[date_col_fail],
-            dayfirst=True,
-            errors='coerce'
-        )
-
-        # Drop invalid dates
-        weather_df = weather_df.dropna(subset=[date_col_weather])
-        fail_df = fail_df.dropna(subset=[date_col_fail])
+        date_col_weather = find_date_column(weather_df, "Weather Data")
+        date_col_fail = find_date_column(fail_df, "Failure Data")
+        wind_col = find_wind_column(weather_df)
 
         # =========================
-        # YEAR SELECTION (AUTO)
+        # SAFE DATE CONVERSION
         # =========================
-        available_years = weather_df[date_col_weather].dt.year.unique()
-        selected_year = st.selectbox("Select Year", sorted(available_years))
+        weather_df = safe_datetime(weather_df, date_col_weather)
+        fail_df = safe_datetime(fail_df, date_col_fail)
+
+        # =========================
+        # YEAR SELECTION
+        # =========================
+        years = weather_df[date_col_weather].dt.year.unique()
+
+        if len(years) == 0:
+            st.error("❌ No valid date data found")
+            st.stop()
+
+        selected_year = st.selectbox("Select Year", sorted(years))
 
         weather_year = weather_df[weather_df[date_col_weather].dt.year == selected_year]
-
-        # =========================
-        # WIND COLUMN DETECTION
-        # =========================
-        wind_col = [c for c in weather_year.columns if 'wind' in c.lower()][0]
 
         # =========================
         # TABS
         # =========================
         tab1, tab2, tab3, tab4 = st.tabs([
-            "🧹 Data Cleansing",
+            "🧹 Data",
             "📊 EDA",
-            "🧬 Reliability Modeling",
-            "🏁 Final Evaluation"
+            "🧬 Modeling",
+            "🏁 Final"
         ])
 
         # =========================
@@ -102,9 +120,6 @@ if weather_file and failure_file:
             c1.dataframe(weather_year.head())
             c2.dataframe(fail_df.head())
 
-            csv = weather_year.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Cleaned Data", csv, "cleaned_data.csv")
-
         # =========================
         # TAB 2 (EDA)
         # =========================
@@ -114,25 +129,18 @@ if weather_file and failure_file:
             v_mean = weather_year[wind_col].mean()
             v_std = weather_year[wind_col].std()
 
-            e1, e2 = st.columns(2)
+            fig, ax = plt.subplots()
+            sns.histplot(weather_year[wind_col], bins=30, kde=True, ax=ax)
+            st.pyplot(fig)
 
-            with e1:
-                fig, ax = plt.subplots()
-                sns.histplot(weather_year[wind_col], bins=30, kde=True, ax=ax)
-                ax.set_title("Wind Speed Distribution")
-                st.pyplot(fig)
+            fig2, ax2 = plt.subplots()
+            ax2.plot(weather_year[date_col_weather], weather_year[wind_col])
 
-            with e2:
-                fig2, ax2 = plt.subplots()
-                ax2.plot(weather_year[date_col_weather], weather_year[wind_col])
+            ymin = weather_year[wind_col].min()
+            ymax = weather_year[wind_col].max()
 
-                ymin = weather_year[wind_col].min()
-                ymax = weather_year[wind_col].max()
-
-                ax2.vlines(fail_df[date_col_fail], ymin=ymin, ymax=ymax, color='red', alpha=0.5)
-                ax2.set_title("Failures vs Wind Timeline")
-
-                st.pyplot(fig2)
+            ax2.vlines(fail_df[date_col_fail], ymin=ymin, ymax=ymax, color='red', alpha=0.5)
+            st.pyplot(fig2)
 
         # =========================
         # TAB 3 (MODELING)
@@ -140,8 +148,11 @@ if weather_file and failure_file:
         with tab3:
             st.subheader("Reliability Modeling")
 
-            t = 1
+            v_mean = weather_year[wind_col].mean()
+            v_std = weather_year[wind_col].std()
+
             lambda_rate = len(fail_df) / 365
+            t = 1
 
             # FTA
             rel_fta = np.exp(-lambda_rate * t) * 100
@@ -149,12 +160,10 @@ if weather_file and failure_file:
             # Monte Carlo
             sim_mean = v_mean * (1 + wind_stress_factor / 100)
             samples = np.random.normal(sim_mean, v_std, 10000)
-
-            threshold = 25
-            rel_mc = np.mean(samples < threshold) * 100
+            rel_mc = np.mean(samples < 25) * 100
 
             # Markov
-            rel_markov = np.exp(-lambda_rate * t) * 100
+            rel_markov = rel_fta
 
             # RUL
             RUL = 1 / lambda_rate if lambda_rate > 0 else np.inf
@@ -163,36 +172,17 @@ if weather_file and failure_file:
             m1.metric("FTA", f"{rel_fta:.2f}%")
             m2.metric("Monte Carlo", f"{rel_mc:.2f}%")
             m3.metric("Markov", f"{rel_markov:.2f}%")
-            m4.metric("RUL (years)", f"{RUL:.2f}")
+            m4.metric("RUL", f"{RUL:.2f} yrs")
 
             if rel_mc < 90:
-                st.warning("⚠️ High Failure Risk!")
-
-            fig_bar, ax_bar = plt.subplots()
-            sns.barplot(x=['FTA', 'Monte Carlo', 'Markov'],
-                        y=[rel_fta, rel_mc, rel_markov],
-                        ax=ax_bar)
-            st.pyplot(fig_bar)
+                st.warning("⚠️ High Risk Detected!")
 
         # =========================
         # TAB 4 (FINAL)
         # =========================
         with tab4:
-            st.subheader("Final Evaluation")
+            st.subheader("Final Decision")
 
-            if 'Component' in fail_df.columns and 'Failure_Mode' in fail_df.columns:
-                gb = fail_df[fail_df['Component'] == 'Gearbox']
-
-                if not gb.empty:
-                    bearing_ratio = (
-                        len(gb[gb['Failure_Mode'].str.contains('Bearing', case=False)])
-                        / len(gb)
-                    ) * 100
-
-                    st.write(f"Bearing Failure Ratio: {bearing_ratio:.2f}%")
-                    st.progress(bearing_ratio / 100)
-
-            # Status
             if rel_fta > 97:
                 status = "EXCELLENT"
             elif rel_fta > 90:
@@ -200,10 +190,10 @@ if weather_file and failure_file:
             else:
                 status = "CRITICAL"
 
-            st.header(f"Final Status: {status}")
+            st.header(f"Status: {status}")
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"❌ Error: {e}")
 
 else:
     st.info("Upload both datasets to begin.")
