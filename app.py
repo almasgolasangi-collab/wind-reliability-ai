@@ -91,9 +91,7 @@ if weather_file and failure_file:
 
         daily_wind = weather_year["Wind"].resample('D').mean()
 
-        # ---------------------------
         # BASIC STATS
-        # ---------------------------
         total_days = len(daily_wind)
         total_hours = len(weather_year)
         failures = len(fail_year)
@@ -109,17 +107,13 @@ if weather_file and failure_file:
             "🧬 Modeling"
         ])
 
-        # ---------------------------
         # CLEANING
-        # ---------------------------
         with tab1:
             st.subheader("Data Cleaning")
             st.dataframe(weather_df.head())
             st.dataframe(fail_df.head())
 
-        # ---------------------------
         # PROCESSING
-        # ---------------------------
         with tab2:
             st.subheader("Data Processing")
             st.write(f"Year: {year}")
@@ -127,9 +121,7 @@ if weather_file and failure_file:
             st.write(f"Total Hours: {total_hours}")
             st.write(f"Failures: {failures}")
 
-        # ---------------------------
         # EDA
-        # ---------------------------
         with tab3:
             st.subheader("EDA")
 
@@ -144,9 +136,7 @@ if weather_file and failure_file:
             ax1.set_title("Wind Speed Distribution")
             st.pyplot(fig1)
 
-        # ---------------------------
         # VISUALIZATION
-        # ---------------------------
         with tab4:
             st.subheader("Wind vs Failures")
 
@@ -163,9 +153,7 @@ if weather_file and failure_file:
 
             st.pyplot(fig2)
 
-        # ---------------------------
         # MODELING (FINAL FIX)
-        # ---------------------------
         with tab5:
             st.subheader("Reliability Modeling")
 
@@ -173,25 +161,23 @@ if weather_file and failure_file:
                 st.error("No data available")
                 st.stop()
 
-            # 🔥 CORRECT FAILURE RATE (per hour)
-            lambda_rate = failures / total_hours
+            # ✅ Minimum failure intensity (fix for 0/low failures)
+            min_lambda = 1 / (total_hours * 2)
+            lambda_rate = max(failures / total_hours, min_lambda)
 
-            # repair rate (3 days → hours)
-            mu = 1 / 72  
+            mu = 1 / 72  # repair rate (3 days)
+            t = mission_time * 24  # convert to hours
 
-            # 🔥 mission time in HOURS (IMPORTANT)
-            t = mission_time * 24  
-
-            # -------- FTA (Exponential) --------
+            # FTA (Exponential)
             rel_fta = np.exp(-lambda_rate * t) * 100
 
-            # -------- MARKOV --------
+            # Markov
             rel_markov = (
                 (mu / (lambda_rate + mu)) +
                 (lambda_rate / (lambda_rate + mu)) * np.exp(-(lambda_rate + mu) * t)
             ) * 100
 
-            # -------- MONTE CARLO --------
+            # Monte Carlo
             sim_mean = v_mean * (1 + wind_stress_factor / 100)
             samples = np.random.normal(sim_mean, v_std, 10000)
 
