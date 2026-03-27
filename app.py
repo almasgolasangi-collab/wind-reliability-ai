@@ -8,13 +8,13 @@ import zipfile
 # ---------------------------
 # PAGE CONFIG
 # ---------------------------
-st.set_page_config(page_title="Wind Turbine Reliability", layout="wide")
-st.title("🛡️ Wind Turbine Reliability Analysis System")
+st.set_page_config(page_title="Wind Reliability", layout="wide")
+st.title("🛡️ Wind Turbine Reliability Analysis")
 
 # ---------------------------
 # SIDEBAR
 # ---------------------------
-st.sidebar.header("⚙️ System Settings")
+st.sidebar.header("⚙️ Controls")
 wind_stress_factor = st.sidebar.slider("Wind Stress Increase (%)", 0, 50, 0)
 
 # ---------------------------
@@ -23,13 +23,13 @@ wind_stress_factor = st.sidebar.slider("Wind Stress Increase (%)", 0, 50, 0)
 col1, col2 = st.columns(2)
 
 with col1:
-    weather_file = st.file_uploader("Upload Wind Data (CSV/ZIP)", type=["csv", "zip"])
+    weather_file = st.file_uploader("Upload Wind Data", type=["csv", "zip"])
 
 with col2:
-    failure_file = st.file_uploader("Upload Failure Data (CSV)", type=["csv"])
+    failure_file = st.file_uploader("Upload Failure Data", type=["csv"])
 
 # ---------------------------
-# MAIN
+# MAIN LOGIC
 # ---------------------------
 if weather_file and failure_file:
     try:
@@ -84,7 +84,6 @@ if weather_file and failure_file:
 
         wind_col = get_wind(weather_df)
 
-        # Rename for clarity
         weather_df.rename(columns={wind_col: "Wind"}, inplace=True)
         wind_col = "Wind"
 
@@ -102,6 +101,9 @@ if weather_file and failure_file:
 
         daily_wind = weather_year[wind_col].resample('D').mean()
 
+        total_days = len(daily_wind)
+        failures = len(fail_year)
+
         # ---------------------------
         # TABS
         # ---------------------------
@@ -118,7 +120,7 @@ if weather_file and failure_file:
         # ---------------------------
         with tab1:
             st.subheader("Data Cleaning")
-            st.write("Missing values removed and dates standardized.")
+            st.write("Dates standardized & missing values removed")
             st.dataframe(weather_df.head())
             st.dataframe(fail_df.head())
 
@@ -128,14 +130,15 @@ if weather_file and failure_file:
         with tab2:
             st.subheader("Data Processing")
             st.write(f"Selected Year: {year}")
-            st.write(f"Total Failures: {len(fail_year)}")
+            st.write(f"Total Days: {total_days}")
+            st.write(f"Failures: {failures}")
             st.dataframe(daily_wind.head())
 
         # ---------------------------
         # EDA
         # ---------------------------
         with tab3:
-            st.subheader("Exploratory Data Analysis")
+            st.subheader("EDA")
 
             v_mean = daily_wind.mean()
             v_std = daily_wind.std()
@@ -155,9 +158,9 @@ if weather_file and failure_file:
             st.subheader("Wind vs Failures")
 
             fig2, ax2 = plt.subplots(figsize=(12, 5))
-
             ax2.plot(daily_wind.index, daily_wind.values)
 
+            # correct alignment
             fail_days = pd.to_datetime(fail_year[fail_date]).dt.date
             for d in fail_days:
                 ax2.axvline(pd.to_datetime(d), alpha=0.3)
@@ -169,22 +172,21 @@ if weather_file and failure_file:
             st.pyplot(fig2)
 
         # ---------------------------
-        # MODELING (REALISTIC)
+        # MODELING (FINAL FIXED)
         # ---------------------------
         with tab5:
             st.subheader("Reliability Modeling")
 
-            total_hours = len(weather_year)
-            failures = len(fail_year)
+            # 🔥 scaled failure rate (important)
+            lambda_rate = (failures / total_days) * 5
 
             # -------- FTA --------
-            P_component = failures / total_hours
+            P_component = (failures / total_days) * 3
             P_system = 1 - (1 - P_component)**3
             rel_fta = (1 - P_system) * 100
 
             # -------- MARKOV --------
-            lambda_rate = failures / total_hours
-            mu = 1 / 48  # repair in 2 days
+            mu = 1 / 2
             rel_markov = (mu / (lambda_rate + mu)) * 100
 
             # -------- MONTE CARLO --------
@@ -205,4 +207,4 @@ if weather_file and failure_file:
         st.error(f"❌ Error: {e}")
 
 else:
-    st.info("Upload both datasets to start analysis")
+    st.info("Upload both datasets to start")
