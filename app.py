@@ -16,6 +16,7 @@ st.title("🛡️ Wind Turbine Reliability Analysis")
 # ---------------------------
 st.sidebar.header("⚙️ Controls")
 wind_stress_factor = st.sidebar.slider("Wind Stress Increase (%)", 0, 50, 0)
+mission_time = st.sidebar.slider("Mission Time (days)", 1, 60, 30)  # 🔥 important
 
 # ---------------------------
 # FILE UPLOAD
@@ -44,34 +45,28 @@ if weather_file and failure_file:
 
         fail_df = pd.read_csv(failure_file)
 
-        # CLEAN COLUMN NAMES
+        # CLEAN
         weather_df.columns = weather_df.columns.str.strip()
         fail_df.columns = fail_df.columns.str.strip()
 
-        # ---------------------------
-        # DETECT DATE COLUMN
-        # ---------------------------
+        # DATE DETECTION
         def get_date(df):
             for col in df.columns:
                 if "date" in col.lower() or "time" in col.lower():
                     return col
             st.error("❌ No Date column found")
-            st.write(df.columns)
             st.stop()
 
         weather_date = get_date(weather_df)
         fail_date = get_date(fail_df)
 
-        # CONVERT DATE
         weather_df[weather_date] = pd.to_datetime(weather_df[weather_date], dayfirst=True, errors='coerce')
         fail_df[fail_date] = pd.to_datetime(fail_df[fail_date], dayfirst=True, errors='coerce')
 
         weather_df.dropna(subset=[weather_date], inplace=True)
         fail_df.dropna(subset=[fail_date], inplace=True)
 
-        # ---------------------------
-        # DETECT WIND COLUMN
-        # ---------------------------
+        # WIND COLUMN
         def get_wind(df):
             for col in df.columns:
                 if col.upper() in ["WS10M", "WS50M"]:
@@ -79,27 +74,22 @@ if weather_file and failure_file:
                 if "wind" in col.lower():
                     return col
             st.error("❌ No wind column found")
-            st.write(df.columns)
             st.stop()
 
         wind_col = get_wind(weather_df)
-
         weather_df.rename(columns={wind_col: "Wind"}, inplace=True)
-        wind_col = "Wind"
 
-        # ---------------------------
         # YEAR FILTER
-        # ---------------------------
         year = st.selectbox("Select Year", sorted(weather_df[weather_date].dt.year.unique()))
 
         weather_year = weather_df[weather_df[weather_date].dt.year == year]
         fail_year = fail_df[fail_df[fail_date].dt.year == year]
 
-        # SORT + RESAMPLE
+        # PROCESSING
         weather_year = weather_year.sort_values(by=weather_date)
         weather_year = weather_year.set_index(weather_date)
 
-        daily_wind = weather_year[wind_col].resample('D').mean()
+        daily_wind = weather_year["Wind"].resample('D').mean()
 
         total_days = len(daily_wind)
         failures = len(fail_year)
@@ -120,7 +110,6 @@ if weather_file and failure_file:
         # ---------------------------
         with tab1:
             st.subheader("Data Cleaning")
-            st.write("Dates standardized & missing values removed")
             st.dataframe(weather_df.head())
             st.dataframe(fail_df.head())
 
@@ -132,7 +121,6 @@ if weather_file and failure_file:
             st.write(f"Selected Year: {year}")
             st.write(f"Total Days: {total_days}")
             st.write(f"Failures: {failures}")
-            st.dataframe(daily_wind.head())
 
         # ---------------------------
         # EDA
@@ -160,47 +148,50 @@ if weather_file and failure_file:
             fig2, ax2 = plt.subplots(figsize=(12, 5))
             ax2.plot(daily_wind.index, daily_wind.values)
 
-            # correct alignment
             fail_days = pd.to_datetime(fail_year[fail_date]).dt.date
             for d in fail_days:
                 ax2.axvline(pd.to_datetime(d), alpha=0.3)
 
             ax2.set_title("Wind Speed vs Failures")
-            ax2.set_xlabel("Date")
-            ax2.set_ylabel("Wind Speed")
-
             st.pyplot(fig2)
 
         # ---------------------------
-        # MODELING (FINAL FIXED)
+        # MODELING (CORRECT)
         # ---------------------------
         with tab5:
             st.subheader("Reliability Modeling")
 
-            # 🔥 scaled failure rate (important)
-            lambda_rate = (failures / total_days) * 5
+            # Avoid divide-by-zero
+            if total_days == 0:
+                st.error("No data available")
+                st.stop()
 
-            # -------- FTA --------
-            P_component = (failures / total_days) * 3
-            P_system = 1 - (1 - P_component)**3
-            rel_fta = (1 - P_system) * 100
+            lambda_rate = failures / total_days
+            mu = 1 / 3  # repair rate
 
-            # -------- MARKOV --------
-            mu = 1 / 2
-            rel_markov = (mu / (lambda_rate + mu)) * 100
+            t = mission_time
+
+            # -------- FTA (Exponential Reliability) --------
+            rel_fta = np.exp(-lambda_rate * t) * 100
+
+            # -------- MARKOV (Time-dependent) --------
+            rel_markov = (
+                (mu / (lambda_rate + mu)) +
+                (lambda_rate / (lambda_rate + mu)) * np.exp(-(lambda_rate + mu) * t)
+            ) * 100
 
             # -------- MONTE CARLO --------
             sim_mean = v_mean * (1 + wind_stress_factor / 100)
             samples = np.random.normal(sim_mean, v_std, 10000)
 
-            stress = samples / (v_mean + 2*v_std)
-            failure_prob = np.clip(stress**3, 0, 1)
+            cut_out = 20  # realistic failure condition
+            failures_mc = samples > cut_out
 
-            rel_mc = (1 - np.mean(failure_prob)) * 100
+            rel_mc = (1 - np.mean(failures_mc)) * 100
 
             c1, c2, c3 = st.columns(3)
-            c1.metric("FTA", f"{rel_fta:.2f}%")
-            c2.metric("Markov", f"{rel_markov:.2f}%")
+            c1.metric("FTA (Time-based)", f"{rel_fta:.2f}%")
+            c2.metric("Markov (Dynamic)", f"{rel_markov:.2f}%")
             c3.metric("Monte Carlo", f"{rel_mc:.2f}%")
 
     except Exception as e:
