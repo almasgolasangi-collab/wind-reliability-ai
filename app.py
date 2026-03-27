@@ -32,7 +32,7 @@ with col2:
 # ---------------------------
 if weather_file and failure_file:
     try:
-        # Load weather
+        # Load weather data
         if weather_file.name.endswith(".zip"):
             with zipfile.ZipFile(weather_file) as z:
                 file_name = [f for f in z.namelist() if f.endswith(".csv")][0]
@@ -41,7 +41,7 @@ if weather_file and failure_file:
         else:
             weather_df = pd.read_csv(weather_file)
 
-        # Load failure
+        # Load failure data
         fail_df = pd.read_csv(failure_file)
 
         # Clean column names
@@ -88,7 +88,7 @@ if weather_file and failure_file:
         weather_year = weather_df[weather_df[weather_date].dt.year == year]
         fail_year = fail_df[fail_df[fail_date].dt.year == year]
 
-        # Sort and resample
+        # Sort and resample daily
         weather_year = weather_year.sort_values(by=weather_date)
         weather_year = weather_year.set_index(weather_date)
         daily_wind = weather_year["Wind"].resample('D').mean()
@@ -151,7 +151,7 @@ if weather_file and failure_file:
             ax2.set_ylabel("Wind Speed")
             st.pyplot(fig2)
 
-        # MODELING (Markov ~75–80%)
+        # MODELING
         with tab5:
             st.subheader("Reliability Modeling")
 
@@ -159,28 +159,39 @@ if weather_file and failure_file:
                 st.error("No data available")
                 st.stop()
 
+            t = mission_time  # in days
+
             # ---------------------------
-            # Base failure rate
+            # FTA Reliability (realistic)
             # ---------------------------
-            base_lambda = 0.1  # 10% per day → gives Markov ~75–80%
+            if failures > 0:
+                lambda_fta = failures / total_days
+            else:
+                lambda_fta = 0.05  # small default if no failures
+
+            # Wind stress effect
+            lambda_fta *= (1 + wind_stress_factor / 100)
+
+            rel_fta = np.exp(-lambda_fta * t) * 100
+
+            # ---------------------------
+            # MARKOV Reliability (~75–80%)
+            # ---------------------------
+            base_lambda_markov = 0.1  # 10% per day → tune for 75–80%
             stress_multiplier = 1 + (wind_stress_factor / 100)
-            wind_factor = v_mean / 20  # normalized by turbine cut-out
-            lambda_rate = base_lambda * stress_multiplier * (1 + wind_factor)
+            wind_factor = v_mean / 20
+            lambda_markov = base_lambda_markov * stress_multiplier * (1 + wind_factor)
 
-            # REPAIR RATE (realistic)
-            mu = 1 / 7  # repair takes 7 days
-            t = mission_time  # mission time in days
+            mu = 1 / 7  # repair in 7 days
 
-            # FTA
-            rel_fta = np.exp(-lambda_rate * t) * 100
-
-            # MARKOV
             rel_markov = (
-                (mu / (lambda_rate + mu)) +
-                (lambda_rate / (lambda_rate + mu)) * np.exp(-(lambda_rate + mu) * t)
+                (mu / (lambda_markov + mu)) +
+                (lambda_markov / (lambda_markov + mu)) * np.exp(-(lambda_markov + mu) * t)
             ) * 100
 
-            # MONTE CARLO
+            # ---------------------------
+            # MONTE CARLO Reliability
+            # ---------------------------
             sim_mean = v_mean * (1 + wind_stress_factor / 100)
             samples = np.random.normal(sim_mean, v_std, 10000)
             cut_out = 20
@@ -188,7 +199,7 @@ if weather_file and failure_file:
             failure_prob = np.clip(stress, 0, 1)
             rel_mc = (1 - np.mean(failure_prob)) * 100
 
-            # DISPLAY METRICS
+            # Display metrics
             c1, c2, c3 = st.columns(3)
             c1.metric("FTA", f"{rel_fta:.2f}%")
             c2.metric("Markov", f"{rel_markov:.2f}%")
