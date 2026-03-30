@@ -120,10 +120,10 @@ if weather_file and failure_file:
             st.pyplot(fig1)
 
         # ===========================
-        # MODELING (CORRECTED)
+        # MODELING (FINAL CORRECTED)
         # ===========================
         with tab5:
-            st.subheader("Reliability Modeling (Corrected)")
+            st.subheader("Reliability Modeling (Final)")
 
             # Convert mission time to years
             t_years = mission_time / 365
@@ -131,7 +131,7 @@ if weather_file and failure_file:
             # Apply stress
             stress = 1 + wind_stress_factor / 100
 
-            # Convert λ → probability using exponential model
+            # Convert λ → probability
             gearbox_fail = 1 - np.exp(-lambda_g * stress * t_years)
             generator_fail = 1 - np.exp(-lambda_gen * stress * t_years)
             blade_fail = 1 - np.exp(-lambda_blade * stress * t_years)
@@ -143,25 +143,25 @@ if weather_file and failure_file:
             Q_system = 1 - ((1 - gearbox_fail) * (1 - Q_and))
             rel_fta = (1 - Q_system) * 100
 
-            # MCS
-            Q_mcs = gearbox_fail + Q_and
-            Q_mcs = min(Q_mcs, 1)
+            # MCS (improved)
+            Q_mcs = gearbox_fail + Q_and - (gearbox_fail * Q_and)
             rel_mcs = (1 - Q_mcs) * 100
 
-            # MARKOV (correct λ usage)
+            # MARKOV (fixed units)
             lambda_total = lambda_g + lambda_gen + lambda_blade
-            mu = 1 / 7
 
-            t = mission_time
+            mu = 1 / 7  # per day
+            mu = mu * 365  # convert to per year
 
             rel_markov = (
                 (mu / (lambda_total + mu)) +
-                (lambda_total / (lambda_total + mu)) * np.exp(-(lambda_total + mu) * t / 30)
+                (lambda_total / (lambda_total + mu)) * np.exp(-(lambda_total + mu) * t_years)
             ) * 100
 
-            # MONTE CARLO
+            # MONTE CARLO (improved)
             sim_mean = v_mean * stress
             samples = np.random.normal(sim_mean, v_std, 10000)
+            samples = np.clip(samples, 0, None)
 
             failures_mc = samples > 20
             rel_mc = (1 - np.mean(failures_mc)) * 100
@@ -172,6 +172,13 @@ if weather_file and failure_file:
             c2.metric("MCS", f"{rel_mcs:.2f}%")
             c3.metric("Markov", f"{rel_markov:.2f}%")
             c4.metric("Monte Carlo", f"{rel_mc:.2f}%")
+
+            # INTERPRETATION
+            st.write("### 📊 Interpretation")
+            st.write(f"FTA (structural): {rel_fta:.2f}%")
+            st.write(f"MCS (simplified): {rel_mcs:.2f}%")
+            st.write(f"Markov (dynamic): {rel_markov:.2f}%")
+            st.write(f"Monte Carlo (probabilistic): {rel_mc:.2f}%")
 
             # FAULT TREE DIAGRAM
             st.subheader("🌳 Fault Tree Diagram")
