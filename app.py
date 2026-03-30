@@ -18,6 +18,12 @@ st.sidebar.header("⚙️ Controls")
 wind_stress_factor = st.sidebar.slider("Wind Stress Increase (%)", 0, 50, 0)
 mission_time = st.sidebar.slider("Mission Time (days)", 1, 60, 30)
 
+# Failure rates (per year)
+st.sidebar.subheader("Failure Rates (per year)")
+lambda_g = st.sidebar.number_input("Gearbox Failure Rate", value=1.0)
+lambda_gen = st.sidebar.number_input("Generator Failure Rate", value=0.5)
+lambda_blade = st.sidebar.number_input("Blade Failure Rate", value=0.7)
+
 # ---------------------------
 # FILE UPLOAD
 # ---------------------------
@@ -90,7 +96,6 @@ if weather_file and failure_file:
 
         # STATS
         total_days = len(daily_wind)
-        total_hours = len(weather_year)
         failures = len(fail_year)
 
         # TABS
@@ -101,17 +106,6 @@ if weather_file and failure_file:
             "📈 Visualization",
             "🧬 Modeling"
         ])
-
-        # CLEANING
-        with tab1:
-            st.dataframe(weather_df.head())
-            st.dataframe(fail_df.head())
-
-        # PROCESSING
-        with tab2:
-            st.write(f"Year: {year}")
-            st.write(f"Total Days: {total_days}")
-            st.write(f"Failures: {failures}")
 
         # EDA
         with tab3:
@@ -125,32 +119,27 @@ if weather_file and failure_file:
             sns.histplot(daily_wind, bins=30, kde=True, ax=ax1)
             st.pyplot(fig1)
 
-        # VISUALIZATION
-        with tab4:
-            fig2, ax2 = plt.subplots(figsize=(12, 5))
-            ax2.plot(daily_wind.index, daily_wind.values)
-
-            fail_days = pd.to_datetime(fail_year[fail_date]).dt.date
-            for d in fail_days:
-                ax2.axvline(pd.to_datetime(d), alpha=0.3)
-
-            st.pyplot(fig2)
-
         # ===========================
-        # MODELING (FINAL)
+        # MODELING (CORRECTED)
         # ===========================
         with tab5:
-            st.subheader("Reliability Modeling")
+            st.subheader("Reliability Modeling (Corrected)")
 
-            # COMPONENT FAILURES
-            gearbox_fail = 0.01 * (1 + wind_stress_factor / 100)
-            generator_fail = 0.008 * (1 + wind_stress_factor / 100)
-            blade_fail = 0.012 * (1 + wind_stress_factor / 100)
+            # Convert mission time to years
+            t_years = mission_time / 365
 
-            # AND GATE
+            # Apply stress
+            stress = 1 + wind_stress_factor / 100
+
+            # Convert λ → probability using exponential model
+            gearbox_fail = 1 - np.exp(-lambda_g * stress * t_years)
+            generator_fail = 1 - np.exp(-lambda_gen * stress * t_years)
+            blade_fail = 1 - np.exp(-lambda_blade * stress * t_years)
+
+            # AND gate
             Q_and = generator_fail * blade_fail
 
-            # OR GATE (FTA)
+            # OR gate (FTA)
             Q_system = 1 - ((1 - gearbox_fail) * (1 - Q_and))
             rel_fta = (1 - Q_system) * 100
 
@@ -159,20 +148,21 @@ if weather_file and failure_file:
             Q_mcs = min(Q_mcs, 1)
             rel_mcs = (1 - Q_mcs) * 100
 
-            # MARKOV
-            base_lambda = 0.1
-            lambda_markov = base_lambda * (1 + wind_stress_factor / 100)
+            # MARKOV (correct λ usage)
+            lambda_total = lambda_g + lambda_gen + lambda_blade
             mu = 1 / 7
+
             t = mission_time
 
             rel_markov = (
-                (mu / (lambda_markov + mu)) +
-                (lambda_markov / (lambda_markov + mu)) * np.exp(-(lambda_markov + mu) * t)
+                (mu / (lambda_total + mu)) +
+                (lambda_total / (lambda_total + mu)) * np.exp(-(lambda_total + mu) * t / 30)
             ) * 100
 
             # MONTE CARLO
-            sim_mean = v_mean * (1 + wind_stress_factor / 100)
+            sim_mean = v_mean * stress
             samples = np.random.normal(sim_mean, v_std, 10000)
+
             failures_mc = samples > 20
             rel_mc = (1 - np.mean(failures_mc)) * 100
 
@@ -183,9 +173,7 @@ if weather_file and failure_file:
             c3.metric("Markov", f"{rel_markov:.2f}%")
             c4.metric("Monte Carlo", f"{rel_mc:.2f}%")
 
-            # ===========================
             # FAULT TREE DIAGRAM
-            # ===========================
             st.subheader("🌳 Fault Tree Diagram")
 
             fig, ax = plt.subplots(figsize=(6,6))
