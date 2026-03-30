@@ -94,11 +94,9 @@ if weather_file and failure_file:
 
         daily_wind = weather_year["Wind"].resample('D').mean()
 
-        # STATS
-        total_days = len(daily_wind)
-        failures = len(fail_year)
-
+        # ---------------------------
         # TABS
+        # ---------------------------
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "🧹 Cleaning",
             "⚙️ Processing",
@@ -107,7 +105,37 @@ if weather_file and failure_file:
             "🧬 Modeling"
         ])
 
-        # EDA
+        # ---------------------------
+        # ✅ TAB 1: CLEANING (ADDED)
+        # ---------------------------
+        with tab1:
+            st.subheader("🧹 Data Cleaning")
+
+            st.write("Weather Data")
+            st.dataframe(weather_df.head())
+
+            st.write("Failure Data")
+            st.dataframe(fail_df.head())
+
+            st.write("Missing Values")
+            st.write(weather_df.isnull().sum())
+
+        # ---------------------------
+        # ✅ TAB 2: PROCESSING (ADDED)
+        # ---------------------------
+        with tab2:
+            st.subheader("⚙️ Data Processing")
+
+            st.write(f"Selected Year: {year}")
+            st.write(f"Total Days: {len(daily_wind)}")
+            st.write(f"Total Failures: {len(fail_year)}")
+
+            st.write("Daily Wind Data")
+            st.dataframe(daily_wind.head())
+
+        # ---------------------------
+        # TAB 3: EDA
+        # ---------------------------
         with tab3:
             v_mean = daily_wind.mean()
             v_std = daily_wind.std()
@@ -117,87 +145,83 @@ if weather_file and failure_file:
 
             fig1, ax1 = plt.subplots()
             sns.histplot(daily_wind, bins=30, kde=True, ax=ax1)
+            ax1.set_title("Wind Speed Distribution")
             st.pyplot(fig1)
 
-        # ===========================
-        # MODELING (FINAL CORRECTED)
-        # ===========================
+        # ---------------------------
+        # ✅ TAB 4: VISUALIZATION (ADDED)
+        # ---------------------------
+        with tab4:
+            st.subheader("📈 Wind vs Failures")
+
+            fig2, ax2 = plt.subplots(figsize=(12, 5))
+            ax2.plot(daily_wind.index, daily_wind.values, label="Wind Speed")
+
+            fail_days = pd.to_datetime(fail_year[fail_date]).dt.date
+            for d in fail_days:
+                ax2.axvline(pd.to_datetime(d), color='red', alpha=0.3)
+
+            ax2.set_title("Wind Speed vs Failure Events")
+            ax2.set_xlabel("Date")
+            ax2.set_ylabel("Wind Speed")
+            ax2.legend()
+
+            st.pyplot(fig2)
+
+        # ---------------------------
+        # TAB 5: MODELING (UNCHANGED)
+        # ---------------------------
         with tab5:
             st.subheader("Reliability Modeling (Final)")
 
-            # Convert mission time to years
             t_years = mission_time / 365
-
-            # Apply stress
             stress = 1 + wind_stress_factor / 100
 
-            # Convert λ → probability
             gearbox_fail = 1 - np.exp(-lambda_g * stress * t_years)
             generator_fail = 1 - np.exp(-lambda_gen * stress * t_years)
             blade_fail = 1 - np.exp(-lambda_blade * stress * t_years)
 
-            # AND gate
             Q_and = generator_fail * blade_fail
-
-            # OR gate (FTA)
             Q_system = 1 - ((1 - gearbox_fail) * (1 - Q_and))
             rel_fta = (1 - Q_system) * 100
 
-            # MCS (improved)
             Q_mcs = gearbox_fail + Q_and - (gearbox_fail * Q_and)
             rel_mcs = (1 - Q_mcs) * 100
 
-            # MARKOV (fixed units)
             lambda_total = lambda_g + lambda_gen + lambda_blade
-
-            mu = 1 / 7  # per day
-            mu = mu * 365  # convert to per year
+            mu = (1 / 7) * 365
 
             rel_markov = (
                 (mu / (lambda_total + mu)) +
                 (lambda_total / (lambda_total + mu)) * np.exp(-(lambda_total + mu) * t_years)
             ) * 100
 
-            # MONTE CARLO (improved)
+            # MONTE CARLO
+            N = 10000
             sim_mean = v_mean * stress
-            samples = np.random.normal(sim_mean, v_std, 10000)
+            samples = np.random.normal(sim_mean, v_std, N)
             samples = np.clip(samples, 0, None)
 
-            failures_mc = samples > 20
-            rel_mc = (1 - np.mean(failures_mc)) * 100
+            wind_fail = samples > 20
+            gearbox_mc = np.random.rand(N) < gearbox_fail
+            generator_mc = np.random.rand(N) < generator_fail
+            blade_mc = np.random.rand(N) < blade_fail
 
-            # DISPLAY
+            and_mc = generator_mc & blade_mc
+            system_fail_mc = wind_fail | gearbox_mc | and_mc
+
+            rel_mc = (1 - np.mean(system_fail_mc)) * 100
+
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("FTA", f"{rel_fta:.2f}%")
             c2.metric("MCS", f"{rel_mcs:.2f}%")
             c3.metric("Markov", f"{rel_markov:.2f}%")
             c4.metric("Monte Carlo", f"{rel_mc:.2f}%")
 
-            # INTERPRETATION
             st.write("### 📊 Interpretation")
-            st.write(f"FTA (structural): {rel_fta:.2f}%")
-            st.write(f"MCS (simplified): {rel_mcs:.2f}%")
-            st.write(f"Markov (dynamic): {rel_markov:.2f}%")
-            st.write(f"Monte Carlo (probabilistic): {rel_mc:.2f}%")
-
-            # FAULT TREE DIAGRAM
-            st.subheader("🌳 Fault Tree Diagram")
-
-            fig, ax = plt.subplots(figsize=(6,6))
-            ax.axis('off')
-
-            ax.text(0.5, 0.9, "System Failure (OR)", ha='center', bbox=dict(boxstyle="round", fc="lightcoral"))
-            ax.text(0.2, 0.6, "Gearbox", ha='center', bbox=dict(boxstyle="round", fc="lightblue"))
-            ax.text(0.7, 0.6, "AND", ha='center', bbox=dict(boxstyle="round", fc="orange"))
-            ax.text(0.6, 0.3, "Generator", ha='center', bbox=dict(boxstyle="round", fc="lightgreen"))
-            ax.text(0.8, 0.3, "Blade", ha='center', bbox=dict(boxstyle="round", fc="lightgreen"))
-
-            ax.plot([0.5, 0.2], [0.85, 0.65], 'k-')
-            ax.plot([0.5, 0.7], [0.85, 0.65], 'k-')
-            ax.plot([0.7, 0.6], [0.55, 0.35], 'k-')
-            ax.plot([0.7, 0.8], [0.55, 0.35], 'k-')
-
-            st.pyplot(fig)
+            st.write(f"FTA: {rel_fta:.2f}% (structural)")
+            st.write(f"Markov: {rel_markov:.2f}% (dynamic)")
+            st.write(f"Monte Carlo: {rel_mc:.2f}% (stochastic realistic)")
 
     except Exception as e:
         st.error(f"❌ Error: {e}")
