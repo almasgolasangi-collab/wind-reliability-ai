@@ -24,7 +24,6 @@ mission_time = st.sidebar.slider("Mission Time (days)", 1, 60, 30)
 col1, col2 = st.columns(2)
 with col1:
     weather_file = st.file_uploader("Upload Wind Data", type=["csv", "zip"])
-
 with col2:
     failure_file = st.file_uploader("Upload Failure Data", type=["csv"])
 
@@ -44,13 +43,11 @@ if weather_file and failure_file:
 
         fail_df = pd.read_csv(failure_file)
 
-        # CLEAN COLUMNS
+        # CLEAN
         weather_df.columns = weather_df.columns.str.strip()
         fail_df.columns = fail_df.columns.str.strip()
 
-        # ---------------------------
-        # DATE DETECTION
-        # ---------------------------
+        # DATE COLUMN
         def get_date(df):
             for col in df.columns:
                 if "date" in col.lower() or "time" in col.lower():
@@ -67,12 +64,10 @@ if weather_file and failure_file:
         weather_df.dropna(subset=[weather_date], inplace=True)
         fail_df.dropna(subset=[fail_date], inplace=True)
 
-        # ---------------------------
         # WIND COLUMN
-        # ---------------------------
         def get_wind(df):
             for col in df.columns:
-                if col.upper() in ["WS10M", "WS50M"]:
+                if col.upper() in ["WS10M", "WS50M", "WINDSPEED_80M"]:
                     return col
                 if "wind" in col.lower():
                     return col
@@ -82,30 +77,23 @@ if weather_file and failure_file:
         wind_col = get_wind(weather_df)
         weather_df.rename(columns={wind_col: "Wind"}, inplace=True)
 
-        # ---------------------------
         # YEAR FILTER
-        # ---------------------------
         year = st.selectbox("Select Year", sorted(weather_df[weather_date].dt.year.unique()))
 
         weather_year = weather_df[weather_df[weather_date].dt.year == year]
         fail_year = fail_df[fail_df[fail_date].dt.year == year]
 
-        # SORT + RESAMPLE
         weather_year = weather_year.sort_values(by=weather_date)
         weather_year = weather_year.set_index(weather_date)
 
         daily_wind = weather_year["Wind"].resample('D').mean()
 
-        # ---------------------------
-        # BASIC STATS
-        # ---------------------------
+        # STATS
         total_days = len(daily_wind)
         total_hours = len(weather_year)
         failures = len(fail_year)
 
-        # ---------------------------
         # TABS
-        # ---------------------------
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "🧹 Cleaning",
             "⚙️ Processing",
@@ -116,24 +104,17 @@ if weather_file and failure_file:
 
         # CLEANING
         with tab1:
-            st.subheader("Data Cleaning")
             st.dataframe(weather_df.head())
             st.dataframe(fail_df.head())
 
         # PROCESSING
         with tab2:
-            st.subheader("Data Processing")
             st.write(f"Year: {year}")
             st.write(f"Total Days: {total_days}")
-            st.write(f"Total Hours: {total_hours}")
             st.write(f"Failures: {failures}")
 
-        # ---------------------------
         # EDA
-        # ---------------------------
         with tab3:
-            st.subheader("EDA")
-
             v_mean = daily_wind.mean()
             v_std = daily_wind.std()
 
@@ -142,15 +123,10 @@ if weather_file and failure_file:
 
             fig1, ax1 = plt.subplots()
             sns.histplot(daily_wind, bins=30, kde=True, ax=ax1)
-            ax1.set_title("Wind Speed Distribution")
             st.pyplot(fig1)
 
-        # ---------------------------
         # VISUALIZATION
-        # ---------------------------
         with tab4:
-            st.subheader("Wind vs Failures")
-
             fig2, ax2 = plt.subplots(figsize=(12, 5))
             ax2.plot(daily_wind.index, daily_wind.values)
 
@@ -158,43 +134,34 @@ if weather_file and failure_file:
             for d in fail_days:
                 ax2.axvline(pd.to_datetime(d), alpha=0.3)
 
-            ax2.set_title("Wind Speed vs Failures")
-            ax2.set_xlabel("Date")
-            ax2.set_ylabel("Wind Speed")
-
             st.pyplot(fig2)
 
-        # ---------------------------
+        # ===========================
         # MODELING (FINAL)
-        # ---------------------------
+        # ===========================
         with tab5:
             st.subheader("Reliability Modeling")
 
-            if total_days == 0:
-                st.error("No data available")
-                st.stop()
-
-            # ===========================
-            # 1. FTA (OR GATE)
-            # ===========================
+            # COMPONENT FAILURES
             gearbox_fail = 0.01 * (1 + wind_stress_factor / 100)
             generator_fail = 0.008 * (1 + wind_stress_factor / 100)
             blade_fail = 0.012 * (1 + wind_stress_factor / 100)
 
-            Q_system = gearbox_fail + generator_fail + blade_fail
-            Q_system = min(Q_system, 1)
+            # AND GATE
+            Q_and = generator_fail * blade_fail
 
+            # OR GATE (FTA)
+            Q_system = 1 - ((1 - gearbox_fail) * (1 - Q_and))
             rel_fta = (1 - Q_system) * 100
 
-            # ===========================
-            # 2. MARKOV (CTMC)
-            # ===========================
+            # MCS
+            Q_mcs = gearbox_fail + Q_and
+            Q_mcs = min(Q_mcs, 1)
+            rel_mcs = (1 - Q_mcs) * 100
+
+            # MARKOV
             base_lambda = 0.1
-            stress_multiplier = 1 + (wind_stress_factor / 100)
-            wind_factor = v_mean / 20
-
-            lambda_markov = base_lambda * stress_multiplier * (1 + wind_factor)
-
+            lambda_markov = base_lambda * (1 + wind_stress_factor / 100)
             mu = 1 / 7
             t = mission_time
 
@@ -203,22 +170,39 @@ if weather_file and failure_file:
                 (lambda_markov / (lambda_markov + mu)) * np.exp(-(lambda_markov + mu) * t)
             ) * 100
 
-            # ===========================
-            # 3. MONTE CARLO
-            # ===========================
+            # MONTE CARLO
             sim_mean = v_mean * (1 + wind_stress_factor / 100)
             samples = np.random.normal(sim_mean, v_std, 10000)
-
-            cut_out = 20
-            failures_mc = samples > cut_out
-
+            failures_mc = samples > 20
             rel_mc = (1 - np.mean(failures_mc)) * 100
 
             # DISPLAY
-            c1, c2, c3 = st.columns(3)
-            c1.metric("FTA (OR Gate)", f"{rel_fta:.2f}%")
-            c2.metric("Markov (CTMC)", f"{rel_markov:.2f}%")
-            c3.metric("Monte Carlo", f"{rel_mc:.2f}%")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("FTA", f"{rel_fta:.2f}%")
+            c2.metric("MCS", f"{rel_mcs:.2f}%")
+            c3.metric("Markov", f"{rel_markov:.2f}%")
+            c4.metric("Monte Carlo", f"{rel_mc:.2f}%")
+
+            # ===========================
+            # FAULT TREE DIAGRAM
+            # ===========================
+            st.subheader("🌳 Fault Tree Diagram")
+
+            fig, ax = plt.subplots(figsize=(6,6))
+            ax.axis('off')
+
+            ax.text(0.5, 0.9, "System Failure (OR)", ha='center', bbox=dict(boxstyle="round", fc="lightcoral"))
+            ax.text(0.2, 0.6, "Gearbox", ha='center', bbox=dict(boxstyle="round", fc="lightblue"))
+            ax.text(0.7, 0.6, "AND", ha='center', bbox=dict(boxstyle="round", fc="orange"))
+            ax.text(0.6, 0.3, "Generator", ha='center', bbox=dict(boxstyle="round", fc="lightgreen"))
+            ax.text(0.8, 0.3, "Blade", ha='center', bbox=dict(boxstyle="round", fc="lightgreen"))
+
+            ax.plot([0.5, 0.2], [0.85, 0.65], 'k-')
+            ax.plot([0.5, 0.7], [0.85, 0.65], 'k-')
+            ax.plot([0.7, 0.6], [0.55, 0.35], 'k-')
+            ax.plot([0.7, 0.8], [0.55, 0.35], 'k-')
+
+            st.pyplot(fig)
 
     except Exception as e:
         st.error(f"❌ Error: {e}")
