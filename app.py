@@ -1,230 +1,209 @@
+# =====================================
+# STREAMLIT APP: WIND TURBINE RELIABILITY
+# =====================================
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
-import zipfile
 
-# ---------------------------
-# PAGE CONFIG
-# ---------------------------
-st.set_page_config(page_title="Wind Reliability", layout="wide")
-st.title("🛡️ Wind Turbine Reliability Analysis")
+st.set_page_config(page_title="Wind Turbine Reliability", layout="wide")
 
-# ---------------------------
-# SIDEBAR
-# ---------------------------
-st.sidebar.header("⚙️ Controls")
-wind_stress_factor = st.sidebar.slider("Wind Stress Increase (%)", 0, 50, 0)
-mission_time = st.sidebar.slider("Mission Time (days)", 1, 60, 30)
-
-# Failure rates (per year)
-st.sidebar.subheader("Failure Rates (per year)")
-lambda_g = st.sidebar.number_input("Gearbox Failure Rate", value=1.0)
-lambda_gen = st.sidebar.number_input("Generator Failure Rate", value=0.5)
-lambda_blade = st.sidebar.number_input("Blade Failure Rate", value=0.7)
+st.title("🌬 Wind Turbine Reliability Analysis")
 
 # ---------------------------
 # FILE UPLOAD
 # ---------------------------
-col1, col2 = st.columns(2)
-with col1:
-    weather_file = st.file_uploader("Upload Wind Data", type=["csv", "zip"])
-with col2:
-    failure_file = st.file_uploader("Upload Failure Data", type=["csv"])
+st.sidebar.header("Upload Data")
 
-# ---------------------------
-# MAIN
-# ---------------------------
-if weather_file and failure_file:
-    try:
-        # LOAD WEATHER
-        if weather_file.name.endswith(".zip"):
-            with zipfile.ZipFile(weather_file) as z:
-                file_name = [f for f in z.namelist() if f.endswith(".csv")][0]
-                with z.open(file_name) as f:
-                    weather_df = pd.read_csv(f)
+failure_file = st.sidebar.file_uploader("Upload Failure Data (CSV)", type=["csv"])
+wind_file = st.sidebar.file_uploader("Upload Wind Data (CSV)", type=["csv"])
+
+if failure_file and wind_file:
+
+    # ---------------------------
+    # LOAD DATA
+    # ---------------------------
+    df = pd.read_csv(failure_file)
+    wind_df = pd.read_csv(wind_file)
+
+    df.columns = df.columns.str.strip()
+    wind_df.columns = wind_df.columns.str.strip().str.lower()
+
+    st.subheader("📊 Raw Data Preview")
+    st.write(df.head())
+
+    # ---------------------------
+    # CLEANING
+    # ---------------------------
+    date_col = [c for c in df.columns if "date" in c.lower()][0]
+    df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+    df = df.dropna(subset=[date_col])
+
+    # ---------------------------
+    # CLASSIFICATION
+    # ---------------------------
+    def classify(row):
+        text = " ".join(map(str, row)).lower()
+        if "bearing" in text:
+            return "Bearing"
+        elif "gear" in text:
+            return "Gear"
+        elif "oil" in text or "lubrication" in text:
+            return "Lubrication"
         else:
-            weather_df = pd.read_csv(weather_file)
+            return "Other"
 
-        fail_df = pd.read_csv(failure_file)
+    df["Component"] = df.apply(classify, axis=1)
 
-        # CLEAN
-        weather_df.columns = weather_df.columns.str.strip()
-        fail_df.columns = fail_df.columns.str.strip()
+    # ---------------------------
+    # EDA
+    # ---------------------------
+    st.subheader("📊 Component Distribution")
+    counts = df["Component"].value_counts()
+    st.write(counts)
 
-        # DATE COLUMN
-        def get_date(df):
-            for col in df.columns:
-                if "date" in col.lower() or "time" in col.lower():
-                    return col
-            st.error("❌ No Date column found")
-            st.stop()
+    fig1, ax1 = plt.subplots()
+    counts.plot(kind='bar', ax=ax1)
+    ax1.set_title("Failure Count by Component")
+    st.pyplot(fig1)
 
-        weather_date = get_date(weather_df)
-        fail_date = get_date(fail_df)
+    # ---------------------------
+    # FAILURE RATE
+    # ---------------------------
+    total_hours = (df[date_col].max() - df[date_col].min()).days * 24
 
-        weather_df[weather_date] = pd.to_datetime(weather_df[weather_date], dayfirst=True, errors='coerce')
-        fail_df[fail_date] = pd.to_datetime(fail_df[fail_date], dayfirst=True, errors='coerce')
+    lambda_base = {
+        comp: max(counts.get(comp, 0) / total_hours, 1/(2*total_hours))
+        for comp in ["Bearing", "Gear", "Lubrication"]
+    }
 
-        weather_df.dropna(subset=[weather_date], inplace=True)
-        fail_df.dropna(subset=[fail_date], inplace=True)
+    mu_dict = {
+        "Bearing": 1/(5*24),
+        "Gear": 1/(7*24),
+        "Lubrication": 1/(2*24)
+    }
 
-        # WIND COLUMN
-        def get_wind(df):
-            for col in df.columns:
-                if col.upper() in ["WS10M", "WS50M", "WINDSPEED_80M"]:
-                    return col
-                if "wind" in col.lower():
-                    return col
-            st.error("❌ No wind column found")
-            st.stop()
+    # =========================================================
+    # 🔴 FTA
+    # =========================================================
+    t = 200
 
-        wind_col = get_wind(weather_df)
-        weather_df.rename(columns={wind_col: "Wind"}, inplace=True)
+    R_fta = {c: np.exp(-lambda_base[c]*t) for c in lambda_base}
+    R_fta_sys = np.prod(list(R_fta.values()))
 
-        # YEAR FILTER
-        year = st.selectbox("Select Year", sorted(weather_df[weather_date].dt.year.unique()))
+    A_fta = {c: mu_dict[c]/(lambda_base[c]+mu_dict[c]) for c in lambda_base}
+    A_fta_sys = np.prod(list(A_fta.values()))
 
-        weather_year = weather_df[weather_df[weather_date].dt.year == year]
-        fail_year = fail_df[fail_df[fail_date].dt.year == year]
+    # =========================================================
+    # 🔴 MARKOV
+    # =========================================================
+    wind_col = [c for c in wind_df.columns if "wind" in c][0]
+    wind_values = wind_df[wind_col].dropna().values
 
-        weather_year = weather_year.sort_values(by=weather_date)
-        weather_year = weather_year.set_index(weather_date)
+    wind_norm = (wind_values - np.min(wind_values)) / (np.max(wind_values) - np.min(wind_values))
+    avg_wind = np.mean(wind_norm)
 
-        daily_wind = weather_year["Wind"].resample('D').mean()
+    k = 0.05
 
-        # ---------------------------
-        # TABS
-        # ---------------------------
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "🧹 Cleaning",
-            "⚙️ Processing",
-            "📊 EDA",
-            "📈 Visualization",
-            "🧬 Modeling"
-        ])
+    lambda_markov = {
+        c: lambda_base[c] * (1 + k * avg_wind)
+        for c in lambda_base
+    }
 
-        # ---------------------------
-        # ✅ TAB 1: CLEANING (ADDED)
-        # ---------------------------
-        with tab1:
-            st.subheader("🧹 Data Cleaning")
+    R_markov = {c: np.exp(-lambda_markov[c]*t) for c in lambda_markov}
+    R_markov_sys = np.prod(list(R_markov.values()))
 
-            st.write("Weather Data")
-            st.dataframe(weather_df.head())
+    # =========================================================
+    # 🔴 MONTE CARLO
+    # =========================================================
+    simulation_time = 200
+    num_sim = 200
 
-            st.write("Failure Data")
-            st.dataframe(fail_df.head())
+    cut_in, cut_out = 5, 20
 
-            st.write("Missing Values")
-            st.write(weather_df.isnull().sum())
+    success = 0
+    LOLE_list = []
 
-        # ---------------------------
-        # ✅ TAB 2: PROCESSING (ADDED)
-        # ---------------------------
-        with tab2:
-            st.subheader("⚙️ Data Processing")
+    for sim in range(num_sim):
 
-            st.write(f"Selected Year: {year}")
-            st.write(f"Total Days: {len(daily_wind)}")
-            st.write(f"Total Failures: {len(fail_year)}")
+        failed_once = False
+        downtime = 0
 
-            st.write("Daily Wind Data")
-            st.dataframe(daily_wind.head())
+        for comp in lambda_base:
 
-        # ---------------------------
-        # TAB 3: EDA
-        # ---------------------------
-        with tab3:
-            v_mean = daily_wind.mean()
-            v_std = daily_wind.std()
+            lam_base = lambda_base[comp]
+            mu = mu_dict[comp]
 
-            st.write(f"Mean Wind Speed: {v_mean:.2f}")
-            st.write(f"Std Dev: {v_std:.2f}")
+            t_sim = 0
+            state = 1
 
-            fig1, ax1 = plt.subplots()
-            sns.histplot(daily_wind, bins=30, kde=True, ax=ax1)
-            ax1.set_title("Wind Speed Distribution")
-            st.pyplot(fig1)
+            while t_sim < simulation_time:
 
-        # ---------------------------
-        # ✅ TAB 4: VISUALIZATION (ADDED)
-        # ---------------------------
-        with tab4:
-            st.subheader("📈 Wind vs Failures")
+                wind = np.random.choice(wind_values)
 
-            fig2, ax2 = plt.subplots(figsize=(12, 5))
-            ax2.plot(daily_wind.index, daily_wind.values, label="Wind Speed")
+                if wind < cut_in or wind > cut_out:
+                    lam = lam_base * 2
+                else:
+                    lam = lam_base
 
-            fail_days = pd.to_datetime(fail_year[fail_date]).dt.date
-            for d in fail_days:
-                ax2.axvline(pd.to_datetime(d), color='red', alpha=0.3)
+                if state == 1:
+                    ttf = np.random.exponential(1/lam)
 
-            ax2.set_title("Wind Speed vs Failure Events")
-            ax2.set_xlabel("Date")
-            ax2.set_ylabel("Wind Speed")
-            ax2.legend()
+                    if t_sim + ttf >= simulation_time:
+                        break
 
-            st.pyplot(fig2)
+                    t_sim += ttf
+                    state = 0
+                    failed_once = True
 
-        # ---------------------------
-        # TAB 5: MODELING (UNCHANGED)
-        # ---------------------------
-        with tab5:
-            st.subheader("Reliability Modeling (Final)")
+                else:
+                    ttr = np.random.exponential(1/mu)
 
-            t_years = mission_time / 365
-            stress = 1 + wind_stress_factor / 100
+                    if t_sim + ttr >= simulation_time:
+                        downtime += (simulation_time - t_sim)
+                        break
 
-            gearbox_fail = 1 - np.exp(-lambda_g * stress * t_years)
-            generator_fail = 1 - np.exp(-lambda_gen * stress * t_years)
-            blade_fail = 1 - np.exp(-lambda_blade * stress * t_years)
+                    t_sim += ttr
+                    downtime += ttr
+                    state = 1
 
-            Q_and = generator_fail * blade_fail
-            Q_system = 1 - ((1 - gearbox_fail) * (1 - Q_and))
-            rel_fta = (1 - Q_system) * 100
+        if not failed_once:
+            success += 1
 
-            Q_mcs = gearbox_fail + Q_and - (gearbox_fail * Q_and)
-            rel_mcs = (1 - Q_mcs) * 100
+        LOLE_list.append(downtime)
 
-            lambda_total = lambda_g + lambda_gen + lambda_blade
-            mu = (1 / 7) * 365
+    R_mc = success / num_sim
+    LOLE_avg = np.mean(LOLE_list)
 
-            rel_markov = (
-                (mu / (lambda_total + mu)) +
-                (lambda_total / (lambda_total + mu)) * np.exp(-(lambda_total + mu) * t_years)
-            ) * 100
+    # =========================================================
+    # 📊 RESULTS
+    # =========================================================
+    st.subheader("📊 Reliability Results")
 
-            # MONTE CARLO
-            N = 10000
-            sim_mean = v_mean * stress
-            samples = np.random.normal(sim_mean, v_std, N)
-            samples = np.clip(samples, 0, None)
+    col1, col2, col3 = st.columns(3)
 
-            wind_fail = samples > 20
-            gearbox_mc = np.random.rand(N) < gearbox_fail
-            generator_mc = np.random.rand(N) < generator_fail
-            blade_mc = np.random.rand(N) < blade_fail
+    col1.metric("FTA Reliability", f"{R_fta_sys*100:.2f}%")
+    col1.metric("FTA Availability", f"{A_fta_sys*100:.2f}%")
 
-            and_mc = generator_mc & blade_mc
-            system_fail_mc = wind_fail | gearbox_mc | and_mc
+    col2.metric("Markov Reliability", f"{R_markov_sys*100:.2f}%")
 
-            rel_mc = (1 - np.mean(system_fail_mc)) * 100
+    col3.metric("Monte Carlo Reliability", f"{R_mc*100:.2f}%")
+    col3.metric("LOLE (hours)", f"{LOLE_avg:.2f}")
 
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("FTA", f"{rel_fta:.2f}%")
-            c2.metric("MCS", f"{rel_mcs:.2f}%")
-            c3.metric("Markov", f"{rel_markov:.2f}%")
-            c4.metric("Monte Carlo", f"{rel_mc:.2f}%")
+    # ---------------------------
+    # COMPARISON CHART
+    # ---------------------------
+    st.subheader("📊 Method Comparison")
 
-            st.write("### 📊 Interpretation")
-            st.write(f"FTA: {rel_fta:.2f}% (structural)")
-            st.write(f"Markov: {rel_markov:.2f}% (dynamic)")
-            st.write(f"Monte Carlo: {rel_mc:.2f}% (stochastic realistic)")
+    methods = ["FTA", "Markov", "Monte Carlo"]
+    values = [R_fta_sys*100, R_markov_sys*100, R_mc*100]
 
-    except Exception as e:
-        st.error(f"❌ Error: {e}")
+    fig2, ax2 = plt.subplots()
+    ax2.bar(methods, values)
+    ax2.set_ylabel("Reliability (%)")
+    ax2.set_title("Reliability Comparison")
+    st.pyplot(fig2)
 
 else:
-    st.info("Upload both datasets to start analysis")
+    st.info("⬅ Upload both files to begin analysis")
