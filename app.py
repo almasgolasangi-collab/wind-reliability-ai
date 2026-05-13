@@ -185,7 +185,7 @@ if failure_file and wind_file:
     }
 
     # =====================================
-    # UPDATED REPAIR RATE (μ)
+    # REPAIR RATE (μ)
     # =====================================
 
     mu_dict = {
@@ -293,7 +293,11 @@ if failure_file and wind_file:
 
         for comp in lambda_base:
 
-            lam_base = lambda_base[comp]
+            # =====================================
+            # INCREASED FAILURE RATE
+            # =====================================
+
+            lam_base = lambda_base[comp] * 3
 
             mu = mu_dict[comp]
 
@@ -308,7 +312,7 @@ if failure_file and wind_file:
                 )
 
                 # =====================================
-                # STRONGER WIND EFFECT
+                # WIND EFFECT
                 # =====================================
 
                 if wind < cut_in or wind > cut_out:
