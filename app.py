@@ -297,7 +297,7 @@ if failure_file and wind_file:
             # INCREASED FAILURE RATE
             # =====================================
 
-            lam_base = lambda_base[comp] * 3
+            lam_base = lambda_base[comp] * 1.8
 
             mu = mu_dict[comp]
 
@@ -317,7 +317,7 @@ if failure_file and wind_file:
 
                 if wind < cut_in or wind > cut_out:
 
-                    lam = lam_base * 1.5
+                    lam = lam_base * 1.25
 
                 else:
 
