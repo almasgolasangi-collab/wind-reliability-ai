@@ -9,7 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # =====================================
-# PAGE CONFIG
+# PAGE CONFIGURATION
 # =====================================
 
 st.set_page_config(
@@ -56,11 +56,7 @@ if failure_file and wind_file:
     # LOAD WIND DATA
     # =====================================
 
-    # NASA POWER DATASET
-    wind_df = pd.read_csv(
-        wind_file,
-        skiprows=9
-    )
+    wind_df = pd.read_csv(wind_file)
 
     wind_df.columns = wind_df.columns.str.strip()
 
@@ -68,8 +64,10 @@ if failure_file and wind_file:
     st.write(wind_df.head())
 
     # =====================================
-    # USE WS50M COLUMN
+    # WIND COLUMN
     # =====================================
+
+    st.write("Wind Columns:", wind_df.columns)
 
     wind_col = "WS50M"
 
@@ -132,7 +130,7 @@ if failure_file and wind_file:
     )
 
     # =====================================
-    # COMPONENT COUNTS
+    # COMPONENT DISTRIBUTION
     # =====================================
 
     st.subheader("📊 Component Distribution")
@@ -268,7 +266,7 @@ if failure_file and wind_file:
     )
 
     # =====================================
-    # MONTE CARLO
+    # MONTE CARLO SIMULATION
     # =====================================
 
     simulation_time = 8760   # 1 YEAR
@@ -371,7 +369,7 @@ if failure_file and wind_file:
     LOLP = LOLE_avg / 8760
 
     # =====================================
-    # RESULTS
+    # RESULTS DISPLAY
     # =====================================
 
     st.subheader("📊 Reliability Results")
