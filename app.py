@@ -190,14 +190,14 @@ if failure_file and wind_file:
 
     mu_dict = {
 
-        # 2 DAYS REPAIR
-        "Bearing": 1 / (2 * 24),
+        # 3 DAYS
+        "Bearing": 1 / (3 * 24),
 
-        # 3 DAYS REPAIR
-        "Gear": 1 / (3 * 24),
+        # 5 DAYS
+        "Gear": 1 / (5 * 24),
 
-        # 1 DAY REPAIR
-        "Lubrication": 1 / (1 * 24)
+        # 2 DAYS
+        "Lubrication": 1 / (2 * 24)
     }
 
     # =====================================
@@ -248,7 +248,7 @@ if failure_file and wind_file:
 
     avg_wind = np.mean(wind_norm)
 
-    k = 0.03
+    k = 0.05
 
     lambda_markov = {
 
@@ -308,12 +308,12 @@ if failure_file and wind_file:
                 )
 
                 # =====================================
-                # REDUCED WIND EFFECT
+                # STRONGER WIND EFFECT
                 # =====================================
 
                 if wind < cut_in or wind > cut_out:
 
-                    lam = lam_base * 1.2
+                    lam = lam_base * 1.5
 
                 else:
 
