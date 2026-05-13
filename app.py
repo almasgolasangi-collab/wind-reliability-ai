@@ -190,13 +190,13 @@ if failure_file and wind_file:
 
     mu_dict = {
 
-        # 3 DAYS
+        # 1.5 DAYS
         "Bearing": 1 / (1.5 * 24),
 
-        # 5 DAYS
+        # 2 DAYS
         "Gear": 1 / (2 * 24),
 
-        # 2 DAYS
+        # 0.5 DAY
         "Lubrication": 1 / (0.5 * 24)
     }
 
@@ -273,7 +273,7 @@ if failure_file and wind_file:
     )
 
     # =====================================
-    # MONTE CARLO SIMULATION
+    # MONTE CARLO RELIABILITY
     # =====================================
 
     simulation_time = 8760   # 1 YEAR
@@ -285,18 +285,17 @@ if failure_file and wind_file:
 
     LOLE_list = []
 
-    uptime_list = []
+    success_count = 0
 
     for sim in range(num_sim):
 
         downtime = 0
 
+        failed = False
+
         for comp in lambda_base:
 
-            # =====================================
-            # INCREASED FAILURE RATE
-            # =====================================
-
+            # Slightly increased failure rate
             lam_base = lambda_base[comp] * 1.8
 
             mu = mu_dict[comp]
@@ -311,9 +310,7 @@ if failure_file and wind_file:
                     wind_values
                 )
 
-                # =====================================
-                # WIND EFFECT
-                # =====================================
+                # Wind effect
 
                 if wind < cut_in or wind > cut_out:
 
@@ -340,6 +337,8 @@ if failure_file and wind_file:
 
                     state = 0
 
+                    failed = True
+
                 # =====================================
                 # FAILED STATE
                 # =====================================
@@ -364,11 +363,9 @@ if failure_file and wind_file:
 
                     state = 1
 
-        uptime = simulation_time - downtime
+        if not failed:
 
-        reliability = uptime / simulation_time
-
-        uptime_list.append(reliability)
+            success_count += 1
 
         LOLE_list.append(downtime)
 
@@ -376,7 +373,7 @@ if failure_file and wind_file:
     # MONTE CARLO RESULTS
     # =====================================
 
-    R_mc = np.mean(uptime_list)
+    R_mc = success_count / num_sim
 
     LOLE_avg = np.mean(
         LOLE_list
