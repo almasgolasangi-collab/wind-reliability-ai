@@ -191,13 +191,13 @@ if failure_file and wind_file:
     mu_dict = {
 
         # 3 DAYS
-        "Bearing": 1 / (3 * 24),
+        "Bearing": 1 / (1.5 * 24),
 
         # 5 DAYS
-        "Gear": 1 / (5 * 24),
+        "Gear": 1 / (2 * 24),
 
         # 2 DAYS
-        "Lubrication": 1 / (2 * 24)
+        "Lubrication": 1 / (0.5 * 24)
     }
 
     # =====================================
