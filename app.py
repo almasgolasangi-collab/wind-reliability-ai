@@ -56,13 +56,11 @@ if failure_file and wind_file:
     # LOAD WIND DATA
     # =====================================
 
-    # Skip NASA POWER header lines
     wind_df = pd.read_csv(
         wind_file,
         skiprows=10
     )
 
-    # Clean columns
     wind_df.columns = wind_df.columns.str.strip()
 
     st.subheader("🌬 Wind Data Preview")
@@ -282,13 +280,11 @@ if failure_file and wind_file:
     cut_in = 5
     cut_out = 20
 
-    success = 0
-
     LOLE_list = []
 
-    for sim in range(num_sim):
+    uptime_list = []
 
-        failed_once = False
+    for sim in range(num_sim):
 
         downtime = 0
 
@@ -333,8 +329,6 @@ if failure_file and wind_file:
 
                     state = 0
 
-                    failed_once = True
-
                 # FAILED STATE
 
                 else:
@@ -357,8 +351,11 @@ if failure_file and wind_file:
 
                     state = 1
 
-        if not failed_once:
-            success += 1
+        uptime = simulation_time - downtime
+
+        reliability = uptime / simulation_time
+
+        uptime_list.append(reliability)
 
         LOLE_list.append(downtime)
 
@@ -366,13 +363,13 @@ if failure_file and wind_file:
     # MONTE CARLO RESULTS
     # =====================================
 
-    R_mc = success / num_sim
+    R_mc = np.mean(uptime_list)
 
     LOLE_avg = np.mean(
         LOLE_list
     )
 
-    LOLP = LOLE_avg / 8760
+    LOLP = LOLE_avg / simulation_time
 
     # =====================================
     # RESULTS DISPLAY
@@ -441,7 +438,8 @@ if failure_file and wind_file:
     ax2.plot(
         methods,
         values,
-        marker='o'
+        marker='o',
+        linewidth=2
     )
 
     ax2.set_ylabel(
