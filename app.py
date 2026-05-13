@@ -9,7 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # =====================================
-# PAGE CONFIGURATION
+# PAGE CONFIG
 # =====================================
 
 st.set_page_config(
@@ -56,22 +56,28 @@ if failure_file and wind_file:
     # LOAD WIND DATA
     # =====================================
 
-    wind_df = pd.read_csv(wind_file)
+    # Skip NASA POWER header lines
+    wind_df = pd.read_csv(
+        wind_file,
+        skiprows=10
+    )
 
+    # Clean columns
     wind_df.columns = wind_df.columns.str.strip()
 
     st.subheader("🌬 Wind Data Preview")
     st.write(wind_df.head())
 
+    st.write("Wind Columns:", wind_df.columns.tolist())
+
     # =====================================
     # WIND COLUMN
     # =====================================
 
-    st.write("Wind Columns:", wind_df.columns)
-
     wind_col = "WS50M"
 
     if wind_col not in wind_df.columns:
+
         st.error("❌ WS50M column not found")
         st.stop()
 
