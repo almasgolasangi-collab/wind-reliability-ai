@@ -17,7 +17,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # ============================================================
-# PAGE CONFIGURATION
+# PAGE SETTINGS
 # ============================================================
 
 st.set_page_config(
@@ -25,29 +25,34 @@ st.set_page_config(
     layout="wide"
 )
 
+# ============================================================
+# TITLE
+# ============================================================
+
 st.title("Wind Turbine Reliability Dashboard")
 
 st.markdown("""
-This dashboard performs reliability analysis using:
+This dashboard performs:
 
 - Fault Tree Analysis (FTA)
-- Markov Chain Analysis
+- Markov Chain Reliability
 - Monte Carlo Simulation
+- LOLE and LOLP Analysis
 """)
 
 # ============================================================
-# FILE UPLOAD
+# SIDEBAR
 # ============================================================
 
 st.sidebar.header("Upload Files")
 
 wind_file = st.sidebar.file_uploader(
-    "Upload Wind Data CSV",
+    "Upload Wind CSV File",
     type=["csv"]
 )
 
 component_file = st.sidebar.file_uploader(
-    "Upload Component Failure Excel",
+    "Upload Component Excel File",
     type=["xlsx"]
 )
 
@@ -102,7 +107,7 @@ if wind_file is not None and component_file is not None:
     ].values
 
     # ========================================================
-    # FAILURE RATE CONVERSION
+    # FAILURE RATE
     # ========================================================
 
     lambda_hour = (
@@ -361,47 +366,43 @@ if wind_file is not None and component_file is not None:
     )
 
     # ========================================================
-    # RESULTS TABLE
+    # TOP METRICS
     # ========================================================
 
-    results = pd.DataFrame({
+    st.subheader("Wind Turbine Reliability")
 
-        "Method": [
+    col1, col2, col3, col4, col5 = st.columns(5)
 
-            "FTA Reliability",
+    col1.metric(
+        "FTA Reliability",
+        f"{R_fta_system * 100:.2f}%"
+    )
 
-            "FTA Availability",
+    col2.metric(
+        "Markov Reliability",
+        f"{R_markov_system * 100:.2f}%"
+    )
 
-            "Markov Reliability",
+    col3.metric(
+        "Monte Carlo Reliability",
+        f"{MonteCarlo_Reliability * 100:.2f}%"
+    )
 
-            "Monte Carlo Reliability",
+    col4.metric(
+        "FTA Availability",
+        f"{A_fta_system * 100:.2f}%"
+    )
 
-            "Monte Carlo Availability"
-        ],
-
-        "Value (%)": [
-
-            R_fta_system * 100,
-
-            A_fta_system * 100,
-
-            R_markov_system * 100,
-
-            MonteCarlo_Reliability * 100,
-
-            MonteCarlo_Availability * 100
-        ]
-    })
-
-    st.subheader("Final Results")
-
-    st.dataframe(results)
+    col5.metric(
+        "LOLE (hours)",
+        f"{LOLE:.2f}"
+    )
 
     # ========================================================
-    # RELIABILITY GRAPH
+    # RELIABILITY COMPARISON GRAPH
     # ========================================================
 
-    st.subheader("Reliability Comparison")
+    st.subheader("Method Comparison")
 
     methods = [
 
@@ -421,26 +422,61 @@ if wind_file is not None and component_file is not None:
         MonteCarlo_Reliability * 100
     ]
 
-    fig1, ax1 = plt.subplots(figsize=(8,5))
+    fig1, ax1 = plt.subplots(figsize=(9,6))
 
-    ax1.plot(
+    bars = ax1.bar(
 
         methods,
 
         values,
 
-        marker='o',
-
-        linewidth=3
+        width=0.8
     )
 
-    ax1.set_ylabel("Reliability (%)")
+    # VALUE LABELS
+
+    for bar in bars:
+
+        height = bar.get_height()
+
+        ax1.text(
+
+            bar.get_x() + bar.get_width()/2,
+
+            height + 0.5,
+
+            f"{height:.2f}%",
+
+            ha='center',
+
+            fontsize=12
+        )
+
+    ax1.set_ylabel(
+        "Reliability (%)",
+        fontsize=14
+    )
+
+    ax1.set_xlabel(
+        "Methods",
+        fontsize=13
+    )
 
     ax1.set_title(
-        "Reliability Comparison"
+        "Reliability Comparison",
+        fontsize=20
     )
 
-    ax1.grid(True)
+    ax1.set_ylim(0, 100)
+
+    ax1.grid(
+
+        axis='y',
+
+        linestyle='--',
+
+        alpha=0.7
+    )
 
     st.pyplot(fig1)
 
@@ -468,6 +504,8 @@ if wind_file is not None and component_file is not None:
     )
 
     plt.xticks(rotation=45)
+
+    ax2.grid(axis='y')
 
     st.pyplot(fig2)
 
@@ -505,7 +543,7 @@ if wind_file is not None and component_file is not None:
 
     st.subheader("LOLE")
 
-    fig4, ax4 = plt.subplots(figsize=(5,4))
+    fig4, ax4 = plt.subplots(figsize=(6,4))
 
     ax4.bar(
         ["LOLE"],
@@ -520,6 +558,8 @@ if wind_file is not None and component_file is not None:
         "Loss of Load Expectation"
     )
 
+    ax4.grid(axis='y')
+
     st.pyplot(fig4)
 
     # ========================================================
@@ -528,7 +568,7 @@ if wind_file is not None and component_file is not None:
 
     st.subheader("LOLP")
 
-    fig5, ax5 = plt.subplots(figsize=(5,4))
+    fig5, ax5 = plt.subplots(figsize=(6,4))
 
     ax5.bar(
         ["LOLP"],
@@ -543,7 +583,46 @@ if wind_file is not None and component_file is not None:
         "Loss of Load Probability"
     )
 
+    ax5.grid(axis='y')
+
     st.pyplot(fig5)
+
+    # ========================================================
+    # FINAL RESULTS TABLE
+    # ========================================================
+
+    st.subheader("Final Results")
+
+    results = pd.DataFrame({
+
+        "Method": [
+
+            "FTA Reliability",
+
+            "FTA Availability",
+
+            "Markov Reliability",
+
+            "Monte Carlo Reliability",
+
+            "Monte Carlo Availability"
+        ],
+
+        "Value (%)": [
+
+            R_fta_system * 100,
+
+            A_fta_system * 100,
+
+            R_markov_system * 100,
+
+            MonteCarlo_Reliability * 100,
+
+            MonteCarlo_Availability * 100
+        ]
+    })
+
+    st.dataframe(results)
 
     # ========================================================
     # CONCLUSION
