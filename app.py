@@ -1,240 +1,168 @@
-# =====================================
-# STREAMLIT APP
+# ============================================================
+# STREAMLIT DASHBOARD
 # WIND TURBINE RELIABILITY ANALYSIS
-# =====================================
+# FTA + MARKOV + MONTE CARLO
+# ============================================================
+
+# RUN USING:
+# streamlit run app.py
+
+# ============================================================
+# IMPORT LIBRARIES
+# ============================================================
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-# =====================================
-# PAGE CONFIG
-# =====================================
+# ============================================================
+# PAGE CONFIGURATION
+# ============================================================
 
 st.set_page_config(
-    page_title="Wind Turbine Reliability",
+    page_title="Wind Turbine Reliability Dashboard",
     layout="wide"
 )
 
-st.title("🌬 Wind Turbine Reliability Analysis")
+st.title("Wind Turbine Reliability Dashboard")
 
-# =====================================
+st.markdown("""
+This dashboard performs reliability analysis using:
+
+- Fault Tree Analysis (FTA)
+- Markov Chain Analysis
+- Monte Carlo Simulation
+""")
+
+# ============================================================
 # FILE UPLOAD
-# =====================================
+# ============================================================
 
-st.sidebar.header("📂 Upload Files")
-
-failure_file = st.sidebar.file_uploader(
-    "Upload Failure Data CSV",
-    type=["csv"]
-)
+st.sidebar.header("Upload Files")
 
 wind_file = st.sidebar.file_uploader(
     "Upload Wind Data CSV",
     type=["csv"]
 )
 
-# =====================================
-# MAIN PROGRAM
-# =====================================
+component_file = st.sidebar.file_uploader(
+    "Upload Component Failure Excel",
+    type=["xlsx"]
+)
 
-if failure_file and wind_file:
+# ============================================================
+# CHECK FILES
+# ============================================================
 
-    # =====================================
-    # LOAD FAILURE DATA
-    # =====================================
+if wind_file is not None and component_file is not None:
 
-    df = pd.read_csv(failure_file)
+    # ========================================================
+    # LOAD DATA
+    # ========================================================
 
-    df.columns = df.columns.str.strip()
+    wind_df = pd.read_csv(wind_file)
 
-    st.subheader("📊 Failure Data Preview")
-    st.write(df.head())
+    comp_df = pd.read_excel(component_file)
 
-    # =====================================
-    # LOAD WIND DATA
-    # =====================================
+    # ========================================================
+    # DISPLAY DATA
+    # ========================================================
 
-    wind_df = pd.read_csv(
-        wind_file,
-        skiprows=10
-    )
+    st.subheader("Wind Data")
 
-    wind_df.columns = wind_df.columns.str.strip()
+    st.dataframe(wind_df.head())
 
-    st.subheader("🌬 Wind Data Preview")
-    st.write(wind_df.head())
+    st.subheader("Component Failure Data")
 
-    st.write("Wind Columns:", wind_df.columns.tolist())
+    st.dataframe(comp_df.head())
 
-    # =====================================
+    # ========================================================
     # WIND COLUMN
-    # =====================================
+    # ========================================================
 
-    wind_col = "WS50M"
+    wind_col = "WS80M"
 
-    if wind_col not in wind_df.columns:
+    wind_values = wind_df[
+        wind_col
+    ].dropna().values
 
-        st.error("❌ WS50M column not found")
-        st.stop()
+    # ========================================================
+    # COMPONENT PARAMETERS
+    # ========================================================
 
-    wind_values = wind_df[wind_col].dropna().values
+    components = comp_df["Component"]
 
-    # =====================================
-    # DATE CLEANING
-    # =====================================
+    failure_rate_year = comp_df[
+        "Failure_Rate_per_Year"
+    ].values
 
-    date_col = None
+    MTTR = comp_df[
+        "MTTR_Hours"
+    ].values
 
-    for col in df.columns:
+    # ========================================================
+    # FAILURE RATE CONVERSION
+    # ========================================================
 
-        if "date" in col.lower():
-
-            date_col = col
-            break
-
-    if date_col is None:
-
-        st.error("❌ Date column not found")
-        st.stop()
-
-    df[date_col] = pd.to_datetime(
-        df[date_col],
-        errors='coerce'
+    lambda_hour = (
+        failure_rate_year / 8760
     )
 
-    df = df.dropna(subset=[date_col])
+    # ========================================================
+    # REPAIR RATE
+    # ========================================================
 
-    # =====================================
-    # COMPONENT CLASSIFICATION
-    # =====================================
+    mu = 1 / MTTR
 
-    def classify(row):
+    # ========================================================
+    # PARAMETER TABLE
+    # ========================================================
 
-        text = " ".join(
-            map(str, row)
-        ).lower()
+    parameter_df = pd.DataFrame({
 
-        if "bearing" in text:
-            return "Bearing"
+        "Component": components,
 
-        elif "gear" in text:
-            return "Gear"
+        "Failure Rate per Hour":
+            lambda_hour,
 
-        elif "oil" in text or "lubrication" in text:
-            return "Lubrication"
+        "Repair Rate":
+            mu
+    })
 
-        else:
-            return "Other"
+    st.subheader("System Parameters")
 
-    df["Component"] = df.apply(
-        classify,
-        axis=1
+    st.dataframe(parameter_df)
+
+    # ========================================================
+    # FTA RELIABILITY
+    # ========================================================
+
+    mission_time = 200
+
+    R_components = np.exp(
+        -lambda_hour * mission_time
     )
 
-    # =====================================
-    # COMPONENT DISTRIBUTION
-    # =====================================
-
-    st.subheader("📊 Component Distribution")
-
-    counts = df["Component"].value_counts()
-
-    st.write(counts)
-
-    fig1, ax1 = plt.subplots()
-
-    counts.plot(
-        kind='bar',
-        ax=ax1
+    R_fta_system = np.prod(
+        R_components
     )
 
-    ax1.set_xlabel("Component")
-    ax1.set_ylabel("Failure Count")
-    ax1.set_title(
-        "Failure Count by Component"
+    # ========================================================
+    # FTA AVAILABILITY
+    # ========================================================
+
+    A_components = mu / (
+        lambda_hour + mu
     )
 
-    st.pyplot(fig1)
-
-    # =====================================
-    # TOTAL OPERATING TIME
-    # =====================================
-
-    total_hours = (
-        (df[date_col].max() - df[date_col].min()).days
-    ) * 24
-
-    # =====================================
-    # FAILURE RATE (λ)
-    # =====================================
-
-    lambda_base = {
-
-        comp: max(
-            counts.get(comp, 0) / total_hours,
-            1 / (2 * total_hours)
-        )
-
-        for comp in [
-            "Bearing",
-            "Gear",
-            "Lubrication"
-        ]
-    }
-
-    # =====================================
-    # REPAIR RATE (μ)
-    # =====================================
-
-    mu_dict = {
-
-        # 1.5 DAYS
-        "Bearing": 1 / (1.5 * 24),
-
-        # 2 DAYS
-        "Gear": 1 / (2 * 24),
-
-        # 0.5 DAY
-        "Lubrication": 1 / (0.5 * 24)
-    }
-
-    # =====================================
-    # FTA MODEL
-    # =====================================
-
-    t = 200
-
-    R_fta = {
-
-        c: np.exp(
-            -lambda_base[c] * t
-        )
-
-        for c in lambda_base
-    }
-
-    R_fta_sys = np.prod(
-        list(R_fta.values())
+    A_fta_system = np.prod(
+        A_components
     )
 
-    A_fta = {
-
-        c: mu_dict[c] / (
-            lambda_base[c] + mu_dict[c]
-        )
-
-        for c in lambda_base
-    }
-
-    A_fta_sys = np.prod(
-        list(A_fta.values())
-    )
-
-    # =====================================
-    # MARKOV MODEL
-    # =====================================
+    # ========================================================
+    # MARKOV RELIABILITY
+    # ========================================================
 
     wind_norm = (
 
@@ -242,87 +170,77 @@ if failure_file and wind_file:
 
     ) / (
 
-        np.max(wind_values) - np.min(wind_values)
+        np.max(wind_values)
+        - np.min(wind_values)
 
     )
 
-    avg_wind = np.mean(wind_norm)
+    avg_wind = np.mean(
+        wind_norm
+    )
 
     k = 0.05
 
-    lambda_markov = {
-
-        c: lambda_base[c] * (
+    lambda_markov = (
+        lambda_hour * (
             1 + k * avg_wind
         )
-
-        for c in lambda_base
-    }
-
-    R_markov = {
-
-        c: np.exp(
-            -lambda_markov[c] * t
-        )
-
-        for c in lambda_markov
-    }
-
-    R_markov_sys = np.prod(
-        list(R_markov.values())
     )
 
-    # =====================================
-    # MONTE CARLO RELIABILITY
-    # =====================================
+    R_markov_components = np.exp(
+        -lambda_markov * mission_time
+    )
 
-    simulation_time = 8760   # 1 YEAR
+    R_markov_system = np.prod(
+        R_markov_components
+    )
+
+    # ========================================================
+    # MONTE CARLO AVAILABILITY
+    # ========================================================
+
+    simulation_time = 8760
 
     num_sim = 300
 
     cut_in = 5
-    cut_out = 20
+    cut_out = 25
 
     LOLE_list = []
 
-    success_count = 0
+    availability_list = []
 
     for sim in range(num_sim):
 
-        downtime = 0
+        total_downtime = 0
 
-        failed = False
+        for i in range(len(components)):
 
-        for comp in lambda_base:
+            lam_base = lambda_hour[i]
 
-            # Slightly increased failure rate
-            lam_base = lambda_base[comp] * 1.8
+            repair_rate = mu[i]
 
-            mu = mu_dict[comp]
-
-            t_sim = 0
+            t = 0
 
             state = 1
 
-            while t_sim < simulation_time:
+            downtime = 0
+
+            while t < simulation_time:
 
                 wind = np.random.choice(
                     wind_values
                 )
 
-                # Wind effect
-
                 if wind < cut_in or wind > cut_out:
 
-                    lam = lam_base * 1.25
+                    lam = lam_base * 1.1
 
                 else:
 
                     lam = lam_base
 
-                # =====================================
                 # WORKING STATE
-                # =====================================
 
                 if state == 1:
 
@@ -330,142 +248,331 @@ if failure_file and wind_file:
                         1 / lam
                     )
 
-                    if t_sim + ttf >= simulation_time:
+                    if t + ttf >= simulation_time:
                         break
 
-                    t_sim += ttf
+                    t += ttf
 
                     state = 0
 
-                    failed = True
-
-                # =====================================
                 # FAILED STATE
-                # =====================================
 
                 else:
 
                     ttr = np.random.exponential(
-                        1 / mu
+                        1 / repair_rate
                     )
 
-                    if t_sim + ttr >= simulation_time:
+                    if t + ttr >= simulation_time:
 
                         downtime += (
-                            simulation_time - t_sim
+                            simulation_time - t
                         )
 
                         break
 
-                    t_sim += ttr
+                    t += ttr
 
                     downtime += ttr
 
                     state = 1
 
+            total_downtime += downtime
+
+        availability = (
+
+            simulation_time
+            - total_downtime
+
+        ) / simulation_time
+
+        availability_list.append(
+            availability
+        )
+
+        LOLE_list.append(
+            total_downtime
+        )
+
+    MonteCarlo_Availability = np.mean(
+        availability_list
+    )
+
+    LOLE = np.mean(
+        LOLE_list
+    )
+
+    LOLP = LOLE / simulation_time
+
+    # ========================================================
+    # MONTE CARLO RELIABILITY
+    # ========================================================
+
+    mission_time_mc = 300
+
+    success_count = 0
+
+    num_sim_rel = 300
+
+    for sim in range(num_sim_rel):
+
+        failed = False
+
+        for i in range(len(components)):
+
+            lam_base = lambda_hour[i]
+
+            t = 0
+
+            while t < mission_time_mc:
+
+                wind = np.random.choice(
+                    wind_values
+                )
+
+                if wind < cut_in or wind > cut_out:
+
+                    lam = lam_base * 1.1
+
+                else:
+
+                    lam = lam_base
+
+                ttf = np.random.exponential(
+                    1 / lam
+                )
+
+                t += ttf
+
+                if t < mission_time_mc:
+
+                    failed = True
+                    break
+
+            if failed:
+                break
+
         if not failed:
 
             success_count += 1
 
-        LOLE_list.append(downtime)
-
-    # =====================================
-    # MONTE CARLO RESULTS
-    # =====================================
-
-    R_mc = success_count / num_sim
-
-    LOLE_avg = np.mean(
-        LOLE_list
+    MonteCarlo_Reliability = (
+        success_count / num_sim_rel
     )
 
-    LOLP = LOLE_avg / simulation_time
+    # ========================================================
+    # RESULTS TABLE
+    # ========================================================
 
-    # =====================================
-    # RESULTS DISPLAY
-    # =====================================
+    results = pd.DataFrame({
 
-    st.subheader("📊 Reliability Results")
+        "Method": [
 
-    col1, col2, col3 = st.columns(3)
+            "FTA Reliability",
 
-    # FTA
+            "FTA Availability",
 
-    col1.metric(
-        "FTA Reliability",
-        f"{R_fta_sys*100:.2f}%"
-    )
+            "Markov Reliability",
 
-    col1.metric(
-        "FTA Availability",
-        f"{A_fta_sys*100:.2f}%"
-    )
+            "Monte Carlo Reliability",
 
-    # MARKOV
+            "Monte Carlo Availability"
+        ],
 
-    col2.metric(
-        "Markov Reliability",
-        f"{R_markov_sys*100:.2f}%"
-    )
+        "Value (%)": [
 
-    # MONTE CARLO
+            R_fta_system * 100,
 
-    col3.metric(
-        "Monte Carlo Reliability",
-        f"{R_mc*100:.2f}%"
-    )
+            A_fta_system * 100,
 
-    col3.metric(
-        "LOLE (hours/year)",
-        f"{LOLE_avg:.2f}"
-    )
+            R_markov_system * 100,
 
-    col3.metric(
-        "LOLP",
-        f"{LOLP:.4f}"
-    )
+            MonteCarlo_Reliability * 100,
 
-    # =====================================
-    # RELIABILITY COMPARISON GRAPH
-    # =====================================
+            MonteCarlo_Availability * 100
+        ]
+    })
 
-    st.subheader("📈 Reliability Comparison")
+    st.subheader("Final Results")
+
+    st.dataframe(results)
+
+    # ========================================================
+    # RELIABILITY GRAPH
+    # ========================================================
+
+    st.subheader("Reliability Comparison")
 
     methods = [
+
         "FTA",
+
         "Markov",
+
         "Monte Carlo"
     ]
 
     values = [
-        R_fta_sys * 100,
-        R_markov_sys * 100,
-        R_mc * 100
+
+        R_fta_system * 100,
+
+        R_markov_system * 100,
+
+        MonteCarlo_Reliability * 100
     ]
 
-    fig2, ax2 = plt.subplots()
+    fig1, ax1 = plt.subplots(figsize=(8,5))
 
-    ax2.plot(
+    ax1.plot(
+
         methods,
+
         values,
+
         marker='o',
-        linewidth=2
+
+        linewidth=3
     )
 
-    ax2.set_ylabel(
-        "Reliability (%)"
-    )
+    ax1.set_ylabel("Reliability (%)")
 
-    ax2.set_title(
+    ax1.set_title(
         "Reliability Comparison"
     )
 
-    ax2.grid(True)
+    ax1.grid(True)
+
+    st.pyplot(fig1)
+
+    # ========================================================
+    # COMPONENT FAILURE GRAPH
+    # ========================================================
+
+    st.subheader("Component Failure Rates")
+
+    fig2, ax2 = plt.subplots(figsize=(10,5))
+
+    ax2.bar(
+
+        components,
+
+        failure_rate_year
+    )
+
+    ax2.set_ylabel(
+        "Failure Rate per Year"
+    )
+
+    ax2.set_title(
+        "Component Failure Rates"
+    )
+
+    plt.xticks(rotation=45)
 
     st.pyplot(fig2)
+
+    # ========================================================
+    # WIND SPEED GRAPH
+    # ========================================================
+
+    st.subheader("Wind Speed Variation")
+
+    fig3, ax3 = plt.subplots(figsize=(12,5))
+
+    ax3.plot(
+        wind_values[:500]
+    )
+
+    ax3.set_ylabel(
+        "Wind Speed (m/s)"
+    )
+
+    ax3.set_xlabel(
+        "Time Index"
+    )
+
+    ax3.set_title(
+        "Wind Speed Variation"
+    )
+
+    ax3.grid(True)
+
+    st.pyplot(fig3)
+
+    # ========================================================
+    # LOLE GRAPH
+    # ========================================================
+
+    st.subheader("LOLE")
+
+    fig4, ax4 = plt.subplots(figsize=(5,4))
+
+    ax4.bar(
+        ["LOLE"],
+        [LOLE]
+    )
+
+    ax4.set_ylabel(
+        "Hours/Year"
+    )
+
+    ax4.set_title(
+        "Loss of Load Expectation"
+    )
+
+    st.pyplot(fig4)
+
+    # ========================================================
+    # LOLP GRAPH
+    # ========================================================
+
+    st.subheader("LOLP")
+
+    fig5, ax5 = plt.subplots(figsize=(5,4))
+
+    ax5.bar(
+        ["LOLP"],
+        [LOLP]
+    )
+
+    ax5.set_ylabel(
+        "Probability"
+    )
+
+    ax5.set_title(
+        "Loss of Load Probability"
+    )
+
+    st.pyplot(fig5)
+
+    # ========================================================
+    # CONCLUSION
+    # ========================================================
+
+    st.subheader("Conclusion")
+
+    st.markdown("""
+
+    1. FTA provides analytical reliability estimation.
+
+    2. Markov method includes probabilistic
+       state transitions and wind effect.
+
+    3. Monte Carlo Reliability evaluates
+       probability of no failure during
+       mission time.
+
+    4. Monte Carlo Availability evaluates
+       operational performance considering
+       failures and repairs.
+
+    5. Monte Carlo simulation provides
+       realistic reliability assessment
+       under varying wind conditions.
+    """)
 
 else:
 
     st.info(
-        "⬅ Upload both failure and wind datasets"
+        "Please upload both files to continue."
     )
